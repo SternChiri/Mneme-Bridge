@@ -1,0 +1,10 @@
+{
+  "name": "mneme-bridge",
+  "version": "0.5.40",
+  "private": true,
+  "type": "module",
+  "description": "mneme 跨端记忆桥（零依赖 Node HTTP 服务，remote/embedded 双模式）",
+  "engines": {
+    "node": ">=22.5"
+  }
+}

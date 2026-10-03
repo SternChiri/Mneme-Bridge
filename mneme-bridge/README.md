@@ -1,0 +1,183 @@
+# mneme-bridge
+
+mneme 跨端记忆桥：把 DSH 的 mneme 记忆池通过一个带鉴权的 REST 服务暴露给
+Edge 扩展、手机等外部消费方。零 npm 依赖，Node >= 22.5（用到 `node:sqlite`
+与 `AbortSignal.timeout`；本机 24.x 已验证）。
+
+## 启动
+
+```bat
+node server.js
+```
+
+- 首次启动自动生成 `config.json`，并在控制台打印一次 **bridgeToken**（同时写入
+  config.json，之后只在配置文件里）。
+- 默认监听 `0.0.0.0:8760`。
+- 日志：单行 JSON 到 stdout，同时落 `logs/bridge.log`（轮转 5MB × 3）。
+
+### 可选：开机自启 / 双击启动
+
+```bat
+:: start-bridge.cmd（放本目录，双击即起）
+@echo off
+cd /d %~dp0
+node server.js
+```
+
+任务计划程序挂该 cmd 即可实现开机自启（不依赖用户登录窗口）。
+
+## 双模式（启动时决定，进程内粘滞）
+
+| 模式 | 触发条件 | 行为 |
+|---|---|---|
+| remote | `mneme.mode` = `"remote"`，或 `"auto"` 且探测到上游 8790 `/health` 活着 | 纯代理：请求转发 DSH standalone API（Bearer mneme token） |
+| embedded | `mneme.mode` = `"embedded"`，或 `"auto"` 且 8790 不在 | in-process import mneme 0.8.9 lib，直接开 `memory.db`（同库同语义） |
+
+- 探测只在启动时做一次；运行中不热切换（安全理由见 server.js 头注）。
+- **remote 的前提**：DSH 面板「设置 → 外部访问」打开（kv `external_api.enabled=true`），
+  重启 DSH 最稳。上游重启期间 bridge 会 502，重启 bridge 即落回 embedded。
+- embedded 与 DSH 同时开库是设计内场景（WAL + busy_timeout）。embedded 不跑
+  autoDream/summarize（需要 LLM），DSH 在线时照常补跑，无数据损失。
+
+## 配置（config.json）
+
+```json
+{
+  "port": 8760,
+  "host": "0.0.0.0",
+  "bridgeToken": "<首次自动生成，43 字符 base64url>",
+  "mneme": {
+    "url": "http://127.0.0.1:8790",
+    "token": "<DSH 面板外部访问里的 token>",
+    "mode": "auto",
+    "libPath": "<DSH_HOME>/profiles/web/node_modules/@modusensus/dsh-mneme/lib  （通常留空即可，自动探测）",
+    "dataDir": "<DSH_HOME>/memory  （通常留空即可，自动探测）",
+    "probeTimeoutMs": 1000,
+    "requestTimeoutMs": 10000,
+    "contextPinsLimit": 5,
+    "contextRelatedTopK": 6
+  },
+  "conversation": { "capacity": 500 },
+  "import": { "maxImportChars": 50000 },
+  "distill": { "enabled": true, "dshHost": "127.0.0.1", "dshWebPort": 3080, "probeIntervalMs": 60000, "dshCommand": "dsh", "headlessTimeoutMs": 240000, "batchLimit": 60 }
+}
+```
+
+- 环境变量 `MNEME_BRIDGE_CONFIG` 可把配置重定向到任意路径（多实例隔离）；
+  `MNEME_BRIDGE_LOG_DIR` 同理重定向日志。
+- 换过 mneme token（面板重置）就同步改 `mneme.token`。
+
+## REST 接口
+
+除 `GET /health` 外一律要求 `Authorization: Bearer <bridgeToken>`
+（timingSafeEqual 常量时间比较；也接受 `x-dsh-mneme-token` 头）。
+
+| 方法 | 路由 | 入参 | 行为 |
+|---|---|---|---|
+| GET | /health | — | 免鉴权；`{ok, backend, uptimeMs, mneme:{url或dataDir}}` |
+| POST | /memory/save | `{type,title,content,importance?,tags?,source?,sensitivity?,occurred_at?}` | 转发 mneme `POST /memories`；embedded 走 `service.saveWithDedupe`。返回 201 created / 200 merged |
+| POST | /memory/search | `{q, mode?=auto, topK?=5}` | 转发 mneme `GET /search`；embedded 走 `service.searchMemories`（失败退化关键词） |
+| GET | /memory/recent | `?limit=10` | mneme `GET /memories?order=chrono&limit=N` |
+| POST | /memory/conversation | `{user, assistant, url?, sessionId?}` | 合成 history 记忆（title=「网页对话：」+user 前 40 字，tags=`["web","edge"]`，source=`"edge-extension"`）；bridge 侧 sha256(user+\n+assistant) LRU 500 去重，命中直接 `200 {deduped:true}` |
+| GET | /memory/status | — | mneme /status 透传 + `backend` 字段 |
+| GET | /memory/context | `?q=&topK=`（均可省） | v0.2 组合聚合：一次返回 `{profile, rules, pins, related}`——用户画像 + 行为规则 + 高价值记忆（importance≥5，`contextPinsLimit` 条）+ 相关记忆（q 非空时搜 `contextRelatedTopK` 条）。pins/related 每条只留 `{title,content,importance,type}` 且 content 截 160 字。q 为空时 related=[]（不打搜索）。网页端首开页面调这一个路由即可拿到完整上下文 |
+| POST | /memory/distill | — | v0.3：手动触发一轮蒸馏（DSH headless 批量总结缓冲的网页对话）。202 受理异步执行；仅 embedded 模式可用（remote 503） |
+| POST | /memory/import | `{items:[{user,assistant,url?,sessionId?,kind?,occurred_at?}]}` | v0.4：旧会话批量导入（≤200/批）。合成 history 记忆入蒸馏缓冲；sessionId 进 tags（`imp-sess:<sid>`）供断点续跑；`kind:"summary-card"` 标记摘要卡形态。超 `maxImportChars` 返回 `400 {error:"too-large", estimateChars}` |
+| POST | /memory/import/estimate | `{items:[...]}` | v0.4：导入预估器（纯计算不落库）。返回 `{estimateChars, estimateTokens(≈chars/1.6), sessions, maxImportChars, wouldExceed}`——UI 据此渲染「预计消耗」让用户确认后才调 /memory/import |
+
+- type 枚举（save）：`preference / project / decision / history / rejected_solution / pitfall / constraint`
+- CORS 全放开（`*` + `OPTIONS` 预检 204）；真正的门是 token 不是 Origin。
+- 上游 4xx 透传状态码与 `error`；上游网络层不可达 → `502 {error:"mneme-unavailable"}`。
+
+## 安全（务必读）
+
+- 服务绑 `0.0.0.0` 且为**明文 HTTP**：token 明文过网。**仅限家庭/可信局域网，
+  公网勿开**。要出公网请套反代（Caddy/nginx + TLS）或 VPN。
+- bridgeToken 与 mneme token 是两套独立凭证：前者保护 bridge 自身，后者只在
+  bridge → 8790 的服务端链路上使用，扩展侧永远只需要 bridgeToken。
+- token 泄露处置：改 config.json 的 bridgeToken 重启；mneme 侧在 DSH 面板重置。
+- 所有写操作都会进 mneme 审计面（source 字段区分来源），可回溯。
+
+## 导入三层漏斗（v0.4）
+
+旧会话批量导入的成本控制（设计：docs/import-cost-design.md）：
+
+- **L1/L2 在扩展侧**（面板勾选 + 本地摘要卡），bridge 只承接 L3。
+- **预估确认**：`POST /memory/import/estimate` 纯计算不落库，`estimateChars` 与
+  落库口径字节一致（user/assistant 各截 8000 后的 content 长度）；`estimateTokens ≈ chars/1.6`。
+- **字符闸**：`config.import.maxImportChars`（默认 50000）。import 落库前最后确认，
+  超限 `400 {error:"too-large", estimateChars}`——不静默截断（L3 确认过的预算数字必须真实）。
+- **断点续跑**：sessionId 进 tags（`imp-sess:<sid>`），蒸馏按会话粒度跳过已完成会话；
+  同会话迟到批次不重复烧 LLM，且被跳过条目也标 `distilled` 排空状态机。
+  无 sessionId 的旧扩展条目退回条目级处理（v0.3 行为不变）。
+- **摘要卡蒸馏**：导入 item 带 `kind:"summary-card"` 时，蒸馏提示词切换为
+  「提炼跨会话的持久偏好/项目脉络/重要决定，单会话细节一律丢弃」。
+
+```bat
+:: 扩展侧典型序列
+curl -X POST .../memory/import/estimate  # 1. 预算确认（UI 显示 ≈X token）
+curl -X POST .../memory/import           # 2. 确认后分批导入（≤200/批，字符闸兜底）
+:: 3. DSH 启动时 dsh-probe 自动蒸馏；同会话迟到批次自动跳过
+```
+
+## 测试
+
+```bat
+node scriptssmoke.mjs
+```
+
+覆盖：假 mneme 打桩下的 remote 四链路（save/search/recent/conversation+去重）、
+副本库下的 embedded 同四链路、401/502/超时分支、OPTIONS 预检、
+生产库零接触校验（前后 stat 对比）。**smoke 不写生产库**——embedded 链路跑在
+复制到临时目录的库副本上（含 -wal/-shm）。最近一次结果：**98/98 PASS**（v0.4 含 estimate 预估/字符闸/断点续跑端到端断言）。
+
+设计文档核对项（docs/mneme-bridge-design.md §6）：
+
+- [x] remote 四链路 + conversation 去重（假 mneme 打桩验证）
+- [x] embedded 四链路（副本库）+ DSH memory_search 可读（同库同表，写链路同语义）
+- [x] 鉴权：无 token 401 / 错 token 401 / /health 免鉴权
+- [x] CORS：带 Origin 预检 204 + 放行头
+- [ ] 双写并发实测（embedded 写入同时 DSH memory_search 可见）：需要 DSH 在线时
+      人工跑一次，见上节「同库同语义」与 smoke 的副本库直查断言（链路已覆盖）
+- [x] 超时 → 502（假 mneme 慢路径打桩，1s 触发）
+
+## 故障排查
+
+| 症状 | 排查 |
+|---|---|
+| 启动即退 `port in use` | 已有 bridge 在跑（或 8760 被占）；改 config.port |
+| remote 下全 502 | DSH 是否开着、面板外部访问是否 enabled、token 是否一致 |
+| embedded 启动失败 cannot import | libPath 指向的 mneme 版本是否存在；Node 版本 >= 22.5 |
+| 扩展 401 | 扩展配置的 token 与 config.json 的 bridgeToken 是否一致 |
+| 同标题写入总被 merged | 这是 mneme 的 (type,title,scope) 去重语义，非 bug；要并存就换标题 |
+
+## 对话蒸馏器（v0.3，全自动）
+
+网页端对话不再逐轮堆进记忆库：扩展上报的对话先缓冲（tags 标记 `pending-distill`），
+**DSH 一启动，bridge 自动把缓冲的对话批量交给 DSH headless 蒸馏**成精炼的 mneme 记忆条目入库
+（source=`dsh-distiller`，tags 带 `distilled`），原始对话随后标记完成。DSH 没开时一切静默。
+
+### 数据流
+
+```
+网页对话 → bridge 缓冲(pending-distill) → [DSH 启动被探测到] → 按会话分组
+  → dsh --profile headless 批量总结(每会话一次调用) → 解析 JSON → 正式记忆入库
+  → 原始行标记 distilled
+```
+
+### 配置（config.json 的 distill 段，均有默认值）
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| enabled | true | false 时完全关闭（探测也不跑） |
+| dshHost / dshWebPort | 127.0.0.1 / 3080 | DSH Web 探测目标 |
+| probeIntervalMs | 60000 | 探测周期 |
+| dshCommand / dshArgs | "dsh" / [] | headless 命令（PATH 无 dsh 时改全路径） |
+| headlessTimeoutMs | 240000 | 单次 headless 超时 |
+| batchLimit | 60 | 单轮最多蒸馏条数 |
+
+### 注意
+
+- 蒸馏仅在 **embedded 模式**可用（remote 下 8790 无按 tags 查询能力，日志会提示 distiller-unavailable）
+- 验证：`node scripts/distill-test.mjs`（副本库 + 假 dsh 全链路，生产库零接触）
+- 蒸馏提示词按 mneme 七型记忆标准（preference/project/decision/history/pitfall/constraint/rejected_solution）总结，合并重复、丢弃寒暄

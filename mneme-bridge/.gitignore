@@ -1,0 +1,7 @@
+# 运行时生成：含 bridgeToken 与上游 mneme token，绝不入库
+config.json
+
+# 运行日志
+logs/
+data/
+*.log

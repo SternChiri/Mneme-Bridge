@@ -1,0 +1,31 @@
+{
+  "port": 8760,
+  "host": "0.0.0.0",
+  "bridgeToken": "<首次启动自动生成随机 token；也可自己填一个长随机串>",
+  "mneme": {
+    "url": "http://127.0.0.1:8790",
+    "token": "<从 DSH 面板「设置→外部访问」复制；embedded 模式可留空>",
+    "mode": "auto",
+    "libPath": "",
+    "dataDir": "",
+    "probeTimeoutMs": 1000,
+    "requestTimeoutMs": 10000,
+    "contextPinsLimit": 5,
+    "contextRelatedTopK": 6
+  },
+  "conversation": {
+    "capacity": 500
+  },
+  "import": {
+    "maxImportChars": 1500000
+  },
+  "distill": {
+    "enabled": true,
+    "dshHost": "127.0.0.1",
+    "dshWebPort": 3080,
+    "probeIntervalMs": 60000,
+    "dshCommand": "dsh",
+    "headlessTimeoutMs": 240000,
+    "batchLimit": 400
+  }
+}

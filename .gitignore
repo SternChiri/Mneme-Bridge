@@ -1,0 +1,11 @@
+node_modules/
+mneme-bridge/config.json
+mneme-bridge/logs/
+mneme-bridge/data/
+*.log
+Thumbs.db
+.DS_Store
+.env
+dist/
+.vscode/
+*.zip
