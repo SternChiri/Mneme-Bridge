@@ -44,44 +44,86 @@ mneme-memory-project/
 
 ## 快速开始
 
+三步：**起服务 → 装扩展 → 把 token 填进扩展**。
+
 ### 前置条件
 
-- Windows（当前启动脚本仅 Windows；其他平台可手动 node 启动）
-- [DSH](https://github.com/deepseek-ai/dsh) 已安装并至少启动过一次（记忆库由其 mneme 插件管理）
+- Windows（启动脚本目前仅 Windows；其他平台可手动 `node server.js`）
+- [DSH](https://github.com/deepseek-ai/dsh) 已安装并至少启动过一次（记忆库 mneme 随其安装）
 - Node.js ≥ 18
 
-### 1. 启动桥接服务
+---
+
+### 第 1 步：启动桥接服务
 
 双击项目根目录的 **启动mneme-bridge.cmd**：
 
-- **首次运行**会询问"是否注册开机自启"——按 Y 则登录后托盘自动出现，按 N 或直接回车跳过（之后可随时运行 `bridge-launcher.cmd install` 补注册）
-- 之后每次运行直接启动托盘常驻（系统托盘区 mneme 图标，右键可打开状态页/重启/退出）
+- **首次运行**会询问"是否注册开机自启"——按 Y 则登录后自动常驻，按 N 或回车跳过（之后可随时 `bridge-launcher.cmd install` 补注册）
+- 之后运行即启动托盘常驻（系统托盘出现图标，右键可打开状态页/重启/退出）
 
-其它启动方式：
+服务首次启动会在 `mneme-bridge/config.json` **自动生成**一份配置，其中含一个随机 `bridgeToken`：
 
-```bat
-cd mneme-bridge
-启动bridge.bat              rem 前台运行（看日志）
-start-bridge.vbs            rem 后台隐藏窗口
-bridge-launcher.cmd install 注册开机自启
+```json
+{
+  "port": 8760,
+  "bridgeToken": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "mneme": { "mode": "auto", "libPath": "", "dataDir": "" }
+}
 ```
 
-首次启动自动生成 config.json 与随机 bridgeToken。
+**这个 bridgeToken 是扩展连接本服务的凭证——下一步要原样填进扩展设置。**
+查看方式：用记事本打开 `mneme-bridge/config.json`，复制 `bridgeToken` 的值（或托盘图标右键 →「打开状态页」）。
 
-### 2. 安装扩展
+> 记忆库位置（可选）：`mneme.libPath` / `mneme.dataDir` 留空会自动探测 DSH 安装目录；探测失败时日志会给出明确提示，按提示手工填写即可。
 
-Edge 打开 edge://extensions → 开发人员模式 → 加载解压缩的扩展 → 选 mneme-edge-extension 目录。
+---
 
-### 3. 配置记忆库位置
+### 第 2 步：安装浏览器扩展
 
-embedded 模式（推荐）：config.json 的 mneme.libPath / dataDir 留空会自动探测 DSH 默认安装位置；探测失败时按日志提示手工填写。
+1. Edge 打开 `edge://extensions`
+2. 打开左下角 **开发人员模式**
+3. 点 **加载解压缩的扩展**，选择 `mneme-edge-extension` 文件夹
+4. 扩展出现在列表中即安装成功
 
-### 4. 验证
+---
 
-- 浏览器打开 chat.deepseek.com，侧栏出现 mneme 面板且显示"bridge：连通 ✓"
-- 随便聊一轮，1-2 分钟后面板「待蒸馏队列」出现条目
-- 点「立即蒸馏」，完成后在「记忆库」标签看到蒸出的结构化记忆
-- 新开一个会话，DS 已经认识你
+### 第 3 步：把 bridgeToken 填进扩展（关键）
+
+1. 在扩展列表里点 **Mneme Bridge for DeepSeek → 扩展选项**（或点扩展图标 → 选项）
+2. 按下面填写：
+
+   | 字段 | 填什么 |
+   |---|---|
+   | **Bridge 地址** | `http://127.0.0.1:8760`（默认值，通常不用改） |
+   | **访问 Token** | **粘贴第 1 步复制的 `bridgeToken`**（必填，否则连接会被拒） |
+   | 启用记忆注入 | ☑ 勾上 |
+   | 自动收集对话 | ☑ 勾上（不勾则不会捕获对话、无法蒸馏） |
+   | 注入方式 | 隐式注入（推荐，无感）／可见注入（发送前把记忆写进输入框，可编辑） |
+
+3. 保存后 **重新加载扩展**（`edge://extensions` 里点 ↻）并 **刷新 DeepSeek 页面**（这一步不能省，content script 不会热更新）
+
+---
+
+### 第 4 步：验证连通
+
+打开 https://chat.deepseek.com，侧栏底部会出现 **「记忆设置」** 菜单项（与「系统设置」并列）：
+
+1. 点它 → 弹出面板，顶部状态区显示 **「bridge：连通 ✓」**（绿点）= token 正确、服务可达
+   - 若显示未连通：检查 ① 服务是否在跑（托盘图标/浏览器打开 `http://127.0.0.1:8760/health` 应返回 JSON）② token 是否复制完整（无多余空格）
+2. 随便聊一轮 → 面板「待蒸馏队列」出现条目
+3. 点「立即蒸馏」→ 完成后在「记忆库」标签看到蒸出的结构化记忆
+4. **新开一个会话**，你会看到 DS 已经认识你（注入的记忆块）。
+
+---
+
+### 常见问题
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| 面板显示未连通 | token 未填 / 填错 / 服务未启动（见第 4 步排查） |
+| 改了设置没反应 | 扩展需重新加载（↻）+ 页面刷新 |
+| 队列一直不出现条目 | 选项页「自动收集对话」未勾选 |
+| 蒸馏报错 | DSH headless CLI 凭证需单独配置，按 `mneme-bridge/logs/` 内日志提示处理 |
 
 ## 两种注入方式
 
