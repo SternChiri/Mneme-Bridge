@@ -2,7 +2,7 @@
 
 **打通 DSH 与 DeepSeek 网页版的记忆：一套记忆，双端共享。**
 
-DSH（桌面 Agent）与 DeepSeek 网页版目前各自为政——DSH 有一套长期记忆（mneme 插件），网页版却每个新会话都从零开始。本项目把网页端接入同一份记忆库，让记忆在两个端之间自由流动：
+DSH（桌面 Agent）与 DeepSeek 网页版目前各自为政——DSH 侧可以通过插件获得长期记忆（有多种记忆类插件可选，本项目选用其中的 [mneme](https://github.com/slow-stack/mneme)），而网页版每个新会话都从零开始。本项目把网页端接入 mneme 的记忆库，让记忆在两个端之间自由流动：
 
 - **网页对话 → 记忆**：自动捕获你在 chat.deepseek.com 的对话，交由 DSH 蒸馏成原子记忆，存入本地记忆库
 - **记忆 → 网页对话**：之后每个新会话，相关的记忆都会按当轮话题自动注入
@@ -16,11 +16,16 @@ DSH（桌面 Agent）与 DeepSeek 网页版目前各自为政——DSH 有一套
 
 ### 与上游 mneme 的关系
 
-本项目基于 [mneme](https://github.com/slow-stack/mneme)（DSH 的记忆插件，MIT 协议）构建，**以它的记忆库为唯一记忆源**——不复制、不改造、不另建存储，只通过 mneme 的 API 读写。
+本项目基于 [mneme](https://github.com/slow-stack/mneme)（DSH 的记忆类插件之一，MIT 协议）构建，**以它的记忆库为唯一记忆源**——不复制、不改造、不另建存储，只通过 mneme 的 API 读写。
 
 > **本项目不是 DSH 插件**，也不安装在 DSH 内部。它是一个独立的浏览器扩展 + 本地服务，在 mneme 之外提供"网页端接入"这一层能力。二者是协同关系：mneme 管理 DSH 内的记忆，本项目把网页端接进同一份记忆库。
 
-**使用前提**：需要先安装 DSH（mneme 随其安装，且首次启动 DSH 后记忆库才会创建）。本项目自身零 npm 依赖、扩展零构建链。
+**使用前提**：
+
+1. 安装 [DSH](https://github.com/deepseek-ai/dsh)——DSH 本身**不自带**记忆功能，需由插件提供
+2. 在 DSH 中**自行安装 mneme 插件**（本项目依赖的是这个特定插件，而非"任意记忆插件"），并至少启动一次 DSH 以创建记忆库
+
+本项目自身零 npm 依赖、扩展零构建链。
 
 ---
 
@@ -81,22 +86,23 @@ mneme-memory-project/
 
 - Windows 10/11（启动脚本目前仅 Windows；其他平台可手动 `node server.js` 运行）
 - **Node.js ≥ 22.5**——桥接服务使用 Node 内置 `node:sqlite`，低版本会直接启动失败（终端运行 `node -v` 查看；[下载](https://nodejs.org/)）
-- [DSH](https://github.com/deepseek-ai/dsh) 已安装并**至少启动过一次**——记忆库 mneme 随 DSH 安装，首次启动 DSH 才会创建记忆库文件
+- [DSH](https://github.com/deepseek-ai/dsh) 已安装并**至少启动过一次**
+- **mneme 插件已在本机 DSH 中安装**（DSH 不自带记忆功能；mneme 是记忆类插件之一，本项目依赖的是它）——且首次启动 DSH 后才会创建记忆库文件
 
 **三者的关系（先看这个，不然容易懵）：**
 
 ```
   DSH（桌面端）                          DeepSeek 网页版
       │                                      │
-      │ 内置                                  │ 本项目提供
+      │ 需自行安装                             │ 本项目提供
       ▼                                      ▼
-  mneme 插件 ──────同一份记忆库（SQLite）────── 浏览器扩展
-  （记忆的主人）    <DSH_HOME>/memory/memory.db      + 本地桥接服务
+  mneme 插件（记忆类插件之一）──同一份记忆库── 浏览器扩展
+      （记忆的主人）    <DSH_HOME>/memory/memory.db   + 本地桥接服务
 ```
 
-- **mneme**：DSH 的记忆插件，记忆实际存在它管理的 SQLite 里
+- **mneme**：DSH 的记忆类插件之一（需自行安装），记忆实际存在它管理的 SQLite 里
 - **本项目**：不碰记忆库格式，只通过 mneme 的 API 读写——所以 DSH 与网页版看到的是**同一份记忆**
-- **必须先装 DSH**：没装 DSH 就没有记忆库可接，扩展装上也无处可连
+- **必须先装 DSH + mneme 插件**：DSH 不自带记忆功能，本项目接的是 mneme 的记忆库；二者缺一，扩展装上也无处可连
 
 ---
 
