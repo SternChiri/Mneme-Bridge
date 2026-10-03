@@ -48,9 +48,24 @@ mneme-memory-project/
 
 ### 前置条件
 
-- Windows（启动脚本目前仅 Windows；其他平台可手动 `node server.js`）
-- [DSH](https://github.com/deepseek-ai/dsh) 已安装并至少启动过一次（记忆库 mneme 随其安装）
-- Node.js ≥ 18
+- Windows 10/11（启动脚本目前仅 Windows；其他平台可手动 `node server.js` 运行）
+- **Node.js ≥ 22.5**——桥接服务使用 Node 内置 `node:sqlite`，低版本会直接启动失败（终端运行 `node -v` 查看；[下载](https://nodejs.org/)）
+- [DSH](https://github.com/deepseek-ai/dsh) 已安装并**至少启动过一次**——记忆库 mneme 随 DSH 安装，首次启动 DSH 才会创建记忆库文件
+
+**三者的关系（先看这个，不然容易懵）：**
+
+```
+  DSH（桌面端）                          DeepSeek 网页版
+      │                                      │
+      │ 内置                                  │ 本项目提供
+      ▼                                      ▼
+  mneme 插件 ──────同一份记忆库（SQLite）────── 浏览器扩展
+  （记忆的主人）    <DSH_HOME>/memory/memory.db      + 本地桥接服务
+```
+
+- **mneme**：DSH 的记忆插件，记忆实际存在它管理的 SQLite 里
+- **本项目**：不碰记忆库格式，只通过 mneme 的 API 读写——所以 DSH 与网页版看到的是**同一份记忆**
+- **必须先装 DSH**：没装 DSH 就没有记忆库可接，扩展装上也无处可连
 
 ---
 
@@ -72,9 +87,14 @@ mneme-memory-project/
 ```
 
 **这个 bridgeToken 是扩展连接本服务的凭证——下一步要原样填进扩展设置。**
-查看方式：用记事本打开 `mneme-bridge/config.json`，复制 `bridgeToken` 的值（或托盘图标右键 →「打开状态页」）。
+查看方式：用记事本打开 `mneme-bridge/config.json`，复制 `bridgeToken` 的值（或托盘图标右键 →「打开状态页」，会打开 /health 的 JSON，里面不含 token——token 只在 config.json 里）。
 
-> 记忆库位置（可选）：`mneme.libPath` / `mneme.dataDir` 留空会自动探测 DSH 安装目录；探测失败时日志会给出明确提示，按提示手工填写即可。
+> **记忆库位置**：默认留空会自动探测，顺序为 `$DSH_HOME`（或 `~/.dsh`）→ `profiles/web/node_modules/@modusensus/dsh-mneme/lib` 与同级的 `memory` 目录。
+> 若 DSH 装在非默认位置，服务启动时会报错并提示填这两项，手工在 config.json 里填即可：
+> ```json
+> "mneme": { "libPath": "<DSH>/profiles/web/node_modules/@modusensus/dsh-mneme/lib", "dataDir": "<DSH>/memory" }
+> ```
+> （Windows 下路径用正斜杠 `/` 或双反斜杠 `\\\\`）
 
 ---
 
@@ -89,7 +109,8 @@ mneme-memory-project/
 
 ### 第 3 步：把 bridgeToken 填进扩展（关键）
 
-1. 在扩展列表里点 **Mneme Bridge for DeepSeek → 扩展选项**（或点扩展图标 → 选项）
+1. 打开 `edge://extensions` → 找到 **Mneme Bridge for DeepSeek** → 点 **详细信息** → 点 **扩展选项**
+   （也可以点浏览器工具栏上的扩展图标 → 右键 → 选项）
 2. 按下面填写：
 
    | 字段 | 填什么 |
@@ -109,7 +130,8 @@ mneme-memory-project/
 打开 https://chat.deepseek.com，侧栏底部会出现 **「记忆设置」** 菜单项（与「系统设置」并列）：
 
 1. 点它 → 弹出面板，顶部状态区显示 **「bridge：连通 ✓」**（绿点）= token 正确、服务可达
-   - 若显示未连通：检查 ① 服务是否在跑（托盘图标/浏览器打开 `http://127.0.0.1:8760/health` 应返回 JSON）② token 是否复制完整（无多余空格）
+   - 若显示未连通：检查 ① 服务是否在跑（浏览器打开 `http://127.0.0.1:8760/health` 应返回一行 JSON）② token 是否复制完整（末尾别带空格/换行）
+   - 面板里的开关与选项页**双向同步**，在哪里改都一样
 2. 随便聊一轮 → 面板「待蒸馏队列」出现条目
 3. 点「立即蒸馏」→ 完成后在「记忆库」标签看到蒸出的结构化记忆
 4. **新开一个会话**，你会看到 DS 已经认识你（注入的记忆块）。
@@ -124,6 +146,8 @@ mneme-memory-project/
 | 改了设置没反应 | 扩展需重新加载（↻）+ 页面刷新 |
 | 队列一直不出现条目 | 选项页「自动收集对话」未勾选 |
 | 蒸馏报错 | DSH headless CLI 凭证需单独配置，按 `mneme-bridge/logs/` 内日志提示处理 |
+| 启动报 `node:sqlite` 相关错误 | Node 版本过低，需 ≥ 22.5 |
+| 启动报"自动探测失败" | DSH 不在默认位置，按第 1 步的说明手工填写 libPath / dataDir |
 
 ## 两种注入方式
 
