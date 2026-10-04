@@ -55,6 +55,6 @@
 ### 🙏 致谢
 
 - **[dsh-mneme](https://github.com/slow-stack/mneme)**（MIT）——记忆基座。记忆的存储、去重合并、冲突裁决、语义检索均由它提供
-- **[DeepSeek Harness (DSH)](https://github.com/deepseek-ai/dsh)**——蒸馏与记忆库的宿主
+- **[DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness)**——蒸馏与记忆库的宿主
 
 详见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。

@@ -35,6 +35,6 @@ SOFTWARE.
 
 ## DeepSeek Harness (DSH)
 
-- 项目：https://github.com/deepseek-ai/dsh
+- 项目：https://github.com/deepseek-ai/deepseek-harness
 - 用途：宿主程序。mneme 作为其插件运行，本项目的桥接服务调用 DSH 的 headless 模式完成对话蒸馏。
 - 本项目不包含 DSH 的任何代码。

@@ -49,6 +49,6 @@
 ### 🙏 致谢
 
 - [dsh-mneme](https://github.com/slow-stack/mneme) — 记忆基座（存储 / 去重合并 / 冲突裁决 / 语义检索）
-- [DeepSeek Harness](https://github.com/deepseek-ai/dsh) — 蒸馏与记忆库的宿主
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — 蒸馏与记忆库的宿主
 
 **完整变更记录**：见 [CHANGELOG.md](https://github.com/SternChiri/Mneme-Bridge/blob/main/CHANGELOG.md)

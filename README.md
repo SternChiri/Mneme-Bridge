@@ -264,7 +264,7 @@ node server.js
 ## 🙏 致谢
 
 - **[dsh-mneme](https://github.com/slow-stack/mneme)**（MIT）——本项目的记忆底座。记忆的存储、检索、蒸馏提示词管线全部由它提供，本项目只做"把网页端接进来"。感谢上游作者。
-- **[DeepSeek Harness (DSH)](https://github.com/deepseek-ai/dsh)**——蒸馏与记忆库的宿主。
+- **[DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness)**——蒸馏与记忆库的宿主。
 
 ## 📄 License
 

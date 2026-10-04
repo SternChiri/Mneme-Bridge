@@ -10,3 +10,4 @@ dist/
 .vscode/
 *.zip
 .git-commit-msg.txt
+.local/
