@@ -9,3 +9,4 @@ Thumbs.db
 dist/
 .vscode/
 *.zip
+.git-commit-msg.txt
