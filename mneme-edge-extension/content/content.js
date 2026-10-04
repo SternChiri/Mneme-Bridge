@@ -308,7 +308,7 @@
     retrySend: retrySend,
     dbg: dbg
   };
-  console.log('[mneme/cs] content script 版本 0.5.39 mode=' + cfgCache.injectMode); dbg('content script 就绪 (v0.2, mode=' + cfgCache.injectMode + ')');
+  console.log('[mneme/cs] content script 版本 0.6.0 mode=' + cfgCache.injectMode); dbg('content script 就绪 (v0.2, mode=' + cfgCache.injectMode + ')');
 })();
 
 // ====================================================================

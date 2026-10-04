@@ -7,7 +7,7 @@
 //      一眼看出匹配规则差在哪。
 //   D. 记忆收集：SSE 容错解析（delta.content/v/content/text，失败退化递归收集）。
 'use strict'
-  console.log('[mneme/inj] inject script 版本 0.5.39');
+  console.log('[mneme/inj] inject script 版本 0.6.0');
 ;
 (function () {
   if (window.__MNEME_INJ__) return;
