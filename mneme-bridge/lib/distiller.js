@@ -83,19 +83,156 @@ export function createDistiller(opts) {
     });
   }
 
-  /** 从 headless 输出抠 JSON 数组（容忍 markdown 围栏与前后杂文本）。 */
-  function extractJsonArray(text) {
+  /**
+   * 解析 headless 输出中的 JSON 数组（对齐上游 mneme lib/summarize.js parseSummaryJsonResult）。
+   * ok 语义与上游一致：
+   *   - 显式空数组 = 模型明确判断本轮无可沉淀内容 → ok:true（窗口正常消费，不重试）；
+   *   - salvage 路径没有「显式空数组」可言 → ok 只看救回条数，救回 0 个按失败处理
+   *     （不标记 distilled，下轮重试同一窗口）。
+   * entries 已做七型白名单 + title/content 非空校验，importance 夹取 1..5（非整数→3），
+   * 与上游 summarize.js 的过滤/映射逐条对齐；tags 是 bridge 侧附加保留（上游无此字段）。
+   */
+  function parseSummaryJsonResult(raw) {
     const fence = String.fromCharCode(96).repeat(3); // 三连反引号，运行时构造避免源码字面量
-    let body = text;
-    const fs2 = body.indexOf(fence + "json");
+    let text = String(raw ?? "");
+    const fs2 = text.indexOf(fence + "json");
     if (fs2 >= 0) {
-      const fe = body.indexOf(fence, fs2 + fence.length + 4);
-      if (fe > fs2) body = body.slice(fs2 + fence.length + 4, fe);
+      const fe = text.indexOf(fence, fs2 + fence.length + 4);
+      if (fe > fs2) text = text.slice(fs2 + fence.length + 4, fe);
     }
-    const start = body.indexOf("[");
-    const end = body.lastIndexOf("]");
-    if (start === -1 || end === -1 || end <= start) return null;
-    try { return JSON.parse(body.slice(start, end + 1)); } catch (e) { return null; }
+    const start = text.indexOf("[");
+    const end = text.lastIndexOf("]");
+    if (start === -1 || end === -1 || end <= start) return { ok: false, entries: [], salvaged: false };
+    const chunk = text.slice(start, end + 1);
+    let arr;
+    let salvaged = false;
+    try {
+      arr = JSON.parse(chunk);
+    } catch {
+      // 对齐上游 issue #339 修复：中段一处语法错误不该让整窗记忆静默丢失。
+      // 括号配对扫描截出完整顶层对象逐个 parse，救活多少算多少；截出 0 个
+      // 不视为「模型显式说无内容」（那是 ok:true 专属于真实空数组的语义）。
+      arr = salvageArrayItems(chunk);
+      salvaged = true;
+    }
+    if (!Array.isArray(arr)) return { ok: false, entries: [], salvaged };
+    const VALID = new Set(["preference", "project", "decision", "history", "rejected_solution", "pitfall", "constraint"]);
+    const entries = arr.filter(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        VALID.has(item.type) &&
+        typeof item.title === "string" &&
+        item.title.trim() &&
+        typeof item.content === "string" &&
+        item.content.trim()
+    ).map((item) => ({
+      type: item.type,
+      title: item.title.trim(),
+      content: item.content.trim(),
+      // 对齐上游：只有整数 importance 才夹取 1..5，非整数一律回落 3
+      importance: Number.isInteger(item.importance) ? Math.min(5, Math.max(1, item.importance)) : 3,
+      tags: Array.isArray(item.tags) ? item.tags.filter((t) => typeof t === "string") : []   // bridge 侧附加保留
+    }));
+    // 空数组 = 模型显式无内容（ok:true）；非空数组若全部无效则按失败处理，
+    // 否则无效输出会静默消费窗口（原料被标 distilled 而产物为零）。
+    // arrLen/invalid 是审计观测数据（对齐上游 audit.metadata 的 parsed 口径）。
+    return {
+      ok: salvaged ? entries.length > 0 : (arr.length === 0 || entries.length > 0),
+      entries,
+      salvaged,
+      arrLen: arr.length,
+      invalid: arr.length - entries.length
+    };
+  }
+
+  /**
+   * 坏 JSON 抢救扫描器（复刻上游 summarize.js salvageArrayItems，issue #339）：
+   * 截出每个完整的顶层 {...} span 独立 parse。两遍扫描合并去重——
+   *   第一遍 string-aware（字符串值里合法含 { } 的对象走它救回）；
+   *   第二遍完全忽略字符串状态——带奇数个引号（stray quote）的坏对象第一遍
+   *   奇偶失配会把后续对象的收尾 } 吞进字符串里，盲扫按括号深度截取反而能救。
+   * 坏对象两种扫法都 parse 失败自然被丢弃；去重靠序列化键。
+   */
+  function salvageArrayItems(chunk) {
+    const out = [];
+    const seen = new Set();
+    const push = (obj) => {
+      if (!obj || typeof obj !== "object" || Array.isArray(obj)) return;
+      const key = JSON.stringify(obj);
+      if (!seen.has(key)) { seen.add(key); out.push(obj); }
+    };
+    for (const obj of scanBraceSpans(chunk, true)) push(obj);
+    for (const obj of scanBraceSpans(chunk, false)) push(obj);
+    return out;
+  }
+
+  function scanBraceSpans(chunk, respectStrings) {
+    // 对齐上游（CodeRabbit review on #350）：只接受「最外层数组的直接子对象」——
+    // 候选 { 必须满足 arrayDepth===1 && objDepth===0 且前一非空白 token 是 [ 或
+    // ,。否则嵌套子数组里的对象会被误捞、字符串值里的 } 会提前断 span。
+    // 误拦的代价只是少救回（安全侧），误捞的代价是写进假记忆。
+    const items = [];
+    let arrayDepth = 0;
+    let objDepth = 0;
+    let inString = false;
+    let escape = false;
+    let objStart = -1;
+    let prev = "";
+    for (let i = 0; i < chunk.length; i++) {
+      const ch = chunk[i];
+      if (respectStrings && inString) {
+        if (escape) escape = false;
+        else if (ch === "\\") escape = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (respectStrings && ch === '"') { inString = true; continue; }
+      if (ch === "[") { arrayDepth++; prev = "["; continue; }
+      if (ch === "]") { arrayDepth = Math.max(0, arrayDepth - 1); prev = "]"; continue; }
+      if (ch === "{") {
+        if (arrayDepth === 1 && objDepth === 0 && (prev === "[" || prev === ",")) objStart = i;
+        objDepth++;
+        prev = "{";
+        continue;
+      }
+      if (ch === "}") {
+        objDepth = Math.max(0, objDepth - 1);
+        if (objDepth === 0 && objStart !== -1) {
+          try { items.push(JSON.parse(chunk.slice(objStart, i + 1))); } catch (e) { /* 坏对象跳过 */ }
+          objStart = -1;
+        }
+        prev = "}";
+        continue;
+      }
+      if (ch === ",") { prev = ","; continue; }
+      if (!/\s/.test(ch)) prev = ch;
+    }
+    return items;
+  }
+
+  /**
+   * 写一条蒸馏 LLM 审计行（对齐上游 mneme llm_audit_logs 字段口径：
+   * trigger_source / operation_type / model_id / input_tokens / output_tokens /
+   * total_tokens / cost_usd / duration_ms / status / error_message /
+   * related_memory_ids / metadata）。bridge 侧只存日志文件（backend.save 已走
+   * mneme，审计表写入是上游 service 能力，bridge 不新建存储——task 硬约束）。
+   * 审计失败绝不阻塞蒸馏本身（对齐上游 writeAudit 语义）。
+   * fieldSpec: {sid?, status, error_message, metadata?}
+   */
+  function writeAudit(fieldSpec) {
+    try {
+      log.info("distill-llm-audit", {
+        trigger_source: "bridge-distill",
+        operation_type: "summarize_compress",
+        model_id: (config.distill && config.distill.dshCommand) || "dsh",
+        status: fieldSpec.status,
+        error_message: fieldSpec.error_message ?? null,
+        related_memory_ids: [],
+        ...(fieldSpec.sid ? { session_id: String(fieldSpec.sid).slice(0, 8) } : {}),
+        ...(fieldSpec.metadata ? { metadata: fieldSpec.metadata } : {})
+      });
+    } catch (e) { /* 审计失败不阻塞蒸馏 */ }
   }
 
   /**
@@ -131,16 +268,22 @@ export function createDistiller(opts) {
         transcript
       ].join("\n");
     }
+    // v0.6.1：正文 = 上游 mneme lang.js PROMPTS.codingSummary.zh 逐字对齐（涵盖
+    // 通用 + 编码场景：原子记忆原则、七型 JSON 形态、编码三型提取思路）；bridge
+    // 侧补充（transcript 形态 / 反复述防御）单独成节标注，不加进上游口径文本里。
     return [
-      "你是记忆库提炼助手。根据下面的会话内容，提炼值得跨会话记住的原子记忆。",
-      "原子记忆原则：每条记忆只装一个独立事实/偏好/决策，短小、自带完整上下文（把数字、名字、路径、结论等原始细节保留在 content 里，不要抽象概括）；宁可拆成多条也绝不合并丢细节。信息量一般提 2-4 条，信息密集的对话可提 4-8 条。",
-      "反复述防御：对话开头若出现 [记忆参考 | ...] 注入块（来自本机记忆库的历史记忆）或助手在寒暄中复述既有记忆（如『我记得你之前…』），这些内容是已入库记忆的重提，一律不得再次提炼入库；只提炼本对话中**新产生的**事实、决定与偏好。纯寒暄且无新信息的会话输出 []。",
+      // ── 上游 mneme PROMPTS.codingSummary.zh（逐字）──
+      "你是记忆库提炼助手。根据下面的会话内容（含用户输入、助手回答、工具调用与结果），提炼值得跨会话记住的原子记忆。",
+      "原子记忆原则：每条记忆只装一个独立事实/偏好/决策，短小、自带完整上下文（把数字、报错信息、命令、路径、结论等原始细节保留在 content 里，不要抽象概括）；宁可拆成多条也绝不合并丢细节。信息量一般提 2-4 条，信息密集的对话可提 4-8 条。",
       "只输出 JSON 数组，每项形如 {\"type\":\"preference|project|decision|history|rejected_solution|pitfall|constraint\",\"title\":\"简短标题\",\"content\":\"保留原始细节的一句话\",\"importance\":1-5}。",
       "若对话涉及编码/调试，可额外提取编码类记忆：",
       "- rejected_solution：被否决/废弃的实现方案（content 含方案简述 + 被否决原因 + 最终采用方案）",
       "- pitfall：调试踩坑记录（content 含现象/报错 + 根因 + 解决/规避方法）",
       "- constraint：项目工程约束（content 含约束描述 + 来源）",
       "普通闲聊、临时无关对话一律不提取编码类记忆。不要输出任何其他文字。",
+      // ── bridge 侧补充（上游无此输入形态；不并入上游口径文本）──
+      "[bridge 输入形态说明] 下面是网页对话的编号转录，每条含时间戳与用户/助手发言，没有真实的工具调用事件——按普通会话内容蒸馏即可。",
+      "[bridge 反复述防御] 对话开头若出现 [记忆参考 | ...] 注入块（来自本机记忆库的历史记忆）或助手在寒暄中复述既有记忆（如『我记得你之前…』），这些内容是已入库记忆的重提，一律不得再次提炼入库；只提炼本对话中新产生的事实、决定与偏好。纯寒暄且无新信息的会话输出 []。",
       "",
       "会话内容：",
       transcript
@@ -227,14 +370,20 @@ export function createDistiller(opts) {
           const task = buildTask(group, isCard);
           const timeoutMs = (config.distill && config.distill.headlessTimeoutMs) || 240000;
           const out = await runHeadless(task, timeoutMs);
-          const items = extractJsonArray(out);
-          if (!items) { log.warn("distill-parse-fail", { sid: sid.slice(0, 8), head: out.slice(0, 160) }); failedGroups++; continue; }
+          // v0.6.1：解析对齐上游 parseSummaryJsonResult——ok 语义决定窗口消费：
+          //   ok:false → 不标 distilled，下轮重试同一窗口（对齐上游「解析失败不推进 seq」）；
+          //   ok:true（含显式空数组与 salvage 救回条数>0）→ 正常落库 + 标记。
+          const parsed = parseSummaryJsonResult(out);
+          if (!parsed.ok) {
+            log.warn("distill-parse-fail", { sid: sid.slice(0, 8), salvaged: parsed.salvaged, head: out.slice(0, 160) });
+            failedGroups++;
+            continue;
+          }
+          // salvaged（坏 JSON 抢救回条目）与 invalid/empty 计数进审计与日志——
+          // 对齐上游 audit.metadata 口径（json_salvaged/parsed）。
+          if (parsed.salvaged) writeAudit({ sid, status: "success", error_message: null, metadata: { json_salvaged: true, parsed: parsed.arrLen, invalid: parsed.invalid, kept: parsed.entries.length } });
+          const items = parsed.entries;
           for (const it of items) {
-            if (!it || typeof it !== "object") continue;
-            const TYPES = ["preference", "project", "decision", "history", "pitfall", "constraint", "rejected_solution"];
-            if (!TYPES.includes(it.type)) continue;
-            if (typeof it.title !== "string" || !it.title.trim()) continue;
-            if (typeof it.content !== "string" || !it.content.trim()) continue;
             // v0.3.37：正式记忆继承会话归属——
             //   ① tags 继承源条目的 imp-sess:<sid>（面板/检索可按会话过滤、溯源到原始会话）
             //   ② occurred_at 用源条目的会话时间（此前用蒸馏时刻，丢失了"这条记忆来自何时"）
@@ -255,13 +404,16 @@ export function createDistiller(opts) {
               }
               return null;
             })();
+            // v0.6.1：it 已在 parseSummaryJsonResult 按上游口径净化（七型白名单、
+            // title/content trim 非空、importance 整数夹取 1..5 非整数→3）；这里只做
+            // bridge 侧列宽裁剪（title 60 / content 1000，schema 列宽）与来源拼接。
             const memory = {
               type: it.type,
-              title: it.title.trim().slice(0, 60),
-              content: it.content.trim().slice(0, 1000) +
+              title: it.title.slice(0, 60),
+              content: it.content.slice(0, 1000) +
                 "\n\n(蒸馏自 " + group.length + " 轮网页对话" + (sid !== "default" ? "，会话 " + sid.slice(0, 8) : "") + (isCard ? "，摘要卡形态" : "") + ")",
-              importance: Math.min(5, Math.max(1, Math.round(Number(it.importance) || 3))),   // v0.3.38：整数化（schema INTEGER）
-              tags: (Array.isArray(it.tags) ? it.tags.filter((t) => typeof t === "string").slice(0, 4) : [])   // v0.3.38：LLM tags ≤4（会话标记另加，总量 ≤9）
+              importance: it.importance,   // 已按上游口径夹取（整数 1..5，非整数→3）
+              tags: (it.tags.slice(0, 4))   // v0.3.38：LLM tags ≤4（会话标记另加，总量 ≤9）
                 .concat(sessTags.filter((t) => !it.tags || !it.tags.includes(t)).slice(0, 4))
                 .concat(["distilled"]),
               // v0.5.18：source 带会话短 id（对齐 DSH 内记忆的 source=会话id 形态——
@@ -280,7 +432,7 @@ export function createDistiller(opts) {
             // v0.5.23：不再整会话排空——批量上限可能截断会话，排空会把未蒸馏条目一起标 done。
         // 只标本组已蒸馏的 id；会话是否完成由 buffer.isSessionDone（零 pending）判定。
           }
-          log.info("distill-group-done", { sid: sid.slice(0, 8), entries: group.length, items: items.length, card: isCard });
+          log.info("distill-group-done", { sid: sid.slice(0, 8), entries: group.length, items: items.length, card: isCard, salvaged: parsed.salvaged });
         } catch (err) {
           failedGroups++;
           log.warn("distill-group-fail", { sid: sid.slice(0, 8), msg: String((err && err.message) || err).slice(0, 200) });
