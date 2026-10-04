@@ -262,7 +262,10 @@ async function main() {
     mneme: { mode: "embedded", libPath: "", dataDir: embedDir.replace(/\\/g, "/") },   // libPath 留空走自动探测（v0.5.40 开源化）
     // v0.4 断点续跑端到端：蒸馏命令指向 fake-dsh 包装（秒回固定 JSON）；
     // 探测拉长防误触发（dsh-probe 只在离线→在线跳变时触发，fake 端口恒离线）
-    distill: { enabled: false, dshCommand: fakeDshCmd, headlessTimeoutMs: 30000 }
+    distill: { enabled: false, dshCommand: fakeDshCmd, headlessTimeoutMs: 30000 },
+    // v0.6.2（task-12）：蒸馏后清理的 DSH home 重定向到临时目录——smoke 绝不
+    // 碰真实 ~/.dsh/sessions（与生产库零写红线同级的隔离纪律）
+    sessionCleanup: { dshHome: join(tmp, "fake-dsh-home") }
   };
 
   try {

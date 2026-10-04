@@ -23,6 +23,8 @@ const B_ROOT = dirname(fileURLToPath(import.meta.url));   // bridge 根目录
 import { loggerFor } from "./lib/log.js";
 // v0.3：全自动对话蒸馏器（B 路线）——DSH headless 批量总结缓冲的网页对话
 import { createDistiller } from "./lib/distiller.js";
+// v0.6.2（task-12）：DSH headless 蒸馏会话清理（列/清残留单轮会话，四重闸防误删）
+import { createSessionCleaner } from "./lib/session-cleaner.js";
 import { createImportHandler } from "./lib/importer.js";
 // v0.4：导入预估器（三层漏斗 L3 的预估确认，纯计算不落库）
 import { createEstimateHandler } from "./lib/estimate.js";
@@ -144,6 +146,9 @@ async function main() {  const startedAt = Date.now();
     slog.info("distiller-unavailable-remote-mode");
   }
 
+  // v0.6.2（task-12）：DSH 会话清理器（/maintenance/purge-headless-sessions 与蒸馏后自动清理共用）
+  const sessionCleaner = createSessionCleaner({ sessionCleanup: config.sessionCleanup });
+
   // v0.4：旧会话批量导入处理器（复用 backend.save 与蒸馏缓冲状态机）；
   // maxImportChars 字符闸从 config.import 读（默认 50000）
   const importMaxChars = config.import?.maxImportChars ?? 50000;
@@ -186,7 +191,9 @@ async function main() {  const startedAt = Date.now();
     distiller,
     importer,
     // v0.4：导入预估器（POST /memory/import/estimate）
-    estimator
+    estimator,
+    // v0.6.2：DSH 会话清理（POST /maintenance/purge-headless-sessions）
+    sessionCleaner
   });
 
   const server = createServer(handler);

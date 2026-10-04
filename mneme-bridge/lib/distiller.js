@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { loggerFor } from "./log.js";
+import { purgeDistillSessions } from "./session-cleaner.js";
 
 const log = loggerFor("distiller");
 
@@ -437,6 +438,18 @@ export function createDistiller(opts) {
           failedGroups++;
           log.warn("distill-group-fail", { sid: sid.slice(0, 8), msg: String((err && err.message) || err).slice(0, 200) });
         }
+      }
+      // v0.6.2（task-12）：本轮蒸馏全部结束后的外围清理——移除 DSH 里本桥接器
+      // headless 蒸馏留下的单轮残留会话（识别/删除全在 session-cleaner.js，
+      // 四重闸防误删；minAgeMs 跳过刚写完的目录防并发竞态）。fail-safe：任何
+      // 失败只记日志，绝不影响蒸馏结果返回。
+      try {
+        const cleaner = await purgeDistillSessions({ minAgeMs: 5000 });
+        if (cleaner.purged > 0 || cleaner.failed > 0) {
+          log.info("distill-session-cleanup", { purged: cleaner.purged, failed: cleaner.failed });
+        }
+      } catch (e) {
+        log.warn("distill-session-cleanup-fail", { msg: String((e && e.message) || e).slice(0, 160) });
       }
       const summary = { groups: groups.size, saved, failedGroups, skippedSessions };
       log.info("distill-run-done", summary);

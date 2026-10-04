@@ -76,6 +76,15 @@ function defaults() {
       headlessTimeoutMs: 240000,
       // 单轮最多取多少条待蒸馏对话（防止首轮积压过大）
       batchLimit: 60
+    },
+    // v0.6.2（task-12）：DSH headless 蒸馏会话清理器。蒸馏每跑一轮，DSH 都会
+    // 留一个单轮残留会话；清理器在每轮蒸馏结束后移除它们（也走
+    // POST /maintenance/purge-headless-sessions 手动触发）。
+    sessionCleanup: {
+      // DSH home 覆盖（默认 ~/.dsh，或 DSH_HOME 环境变量；正常留空）
+      dshHome: "",
+      // 候选目录 mtime 距今小于该毫秒数的跳过（防正在写入/并发蒸馏竞态）
+      minAgeMs: 5000
     }
   };
 }
@@ -94,7 +103,8 @@ export function loadOrCreateConfig() {
       ...base, ...parsed,
       mneme: { ...base.mneme, ...(parsed.mneme ?? {}) },
       import: { ...base.import, ...(parsed.import ?? {}) },
-      distill: { ...base.distill, ...(parsed.distill ?? {}) }
+      distill: { ...base.distill, ...(parsed.distill ?? {}) },
+      sessionCleanup: { ...base.sessionCleanup, ...(parsed.sessionCleanup ?? {}) }
     };
     return { config, created: false };
   }

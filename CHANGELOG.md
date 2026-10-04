@@ -11,6 +11,18 @@
 
 ---
 
+## v0.6.2 — headless 蒸馏会话不残留（mneme-bridge）
+
+### 🧹 DSH 会话清理（task-12）
+
+- **问题**：`dsh --profile headless` 每次蒸馏都在 DSH `~/.dsh/sessions/` 留一个单轮持久会话（headless runner 无「不保留会话」参数，DSH 0.2.0-rc.2 源码核实），积累约 190 个「未分组」残留污染工作区列表
+- **自动清理**：每轮蒸馏结束后自动移除蒸馏残留会话（`lib/session-cleaner.js`；fail-safe——失败只记日志，绝不阻塞蒸馏主流程）
+- **手动清理**：新增 `POST /maintenance/purge-headless-sessions`（Bearer bridgeToken 鉴权；`dryRun:true` 只列不删预览）
+- **四重识别闸防误删**：会话 cwd 精确等于 bridge 根目录 ＋ 目录名与头帧 id 一致 ＋ 排除 subagent/fork/带预设会话 ＋ 日志文件呈单/成对 zstd 标准形态；另设 mtime 时间闸防并发蒸馏竞态。用户真实会话与 DSH 其他工作区数据零触碰
+- **数据完整性**：删除的只是会话日志目录；DSH 的 sqlite 搜索索引与投影缓存均为派生数据，DSH 启动时对账自动收敛（`dsh-session-query-sqlite` 源码核实）
+- **配置**：新增 `sessionCleanup: { dshHome, minAgeMs }`（默认 `~/.dsh`／5 秒）
+- **测试隔离**：smoke 的 `sessionCleanup.dshHome` 重定向到临时目录，绝不碰真实 `~/.dsh/sessions`（与生产库零写红线同级纪律）
+
 ## v0.6.0 — 首个公开版本
 
 **一套记忆，双端共享。** 网页端对话自动捕获 → 本地缓冲 → DSH 蒸馏 → 写入 mneme 记忆库 → 按话题注入下一次网页对话。至此 DSH 与 DeepSeek 网页版共用同一个记忆大脑。

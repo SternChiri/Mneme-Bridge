@@ -20,7 +20,7 @@ const log = loggerFor("router");
  * @param {{pinsLimit: number, relatedTopK: number}} [opts.contextCfg]
  *                                      /memory/context 的默认条数（config.mneme）
  */
-export function createRequestHandler({ bridgeToken, backend, conversation, bufferStore, startedAt, contextCfg, distiller, importer, estimator }) {
+export function createRequestHandler({ bridgeToken, backend, conversation, bufferStore, startedAt, contextCfg, distiller, importer, estimator, sessionCleaner }) {
   const ctxPinsDefault = Number.isInteger(contextCfg?.pinsLimit) && contextCfg.pinsLimit > 0 ? contextCfg.pinsLimit : 5;
   const ctxTopKDefault = Number.isInteger(contextCfg?.relatedTopK) && contextCfg.relatedTopK > 0 ? contextCfg.relatedTopK : 6;
 
@@ -305,6 +305,37 @@ export function createRequestHandler({ bridgeToken, backend, conversation, buffe
       } catch (err) {
         if (err?.status === 400) { sendJson(res, 400, { error: err.message }); return; }
         throw err;
+      }
+      return;
+    }
+
+    // ---- POST /maintenance/purge-headless-sessions（v0.6.2，task-12）--------
+    // 列出/清除 DSH 里本桥接器 headless 蒸馏留下的单轮残留会话。
+    // body: {dryRun?:boolean}；dryRun=true 只列不删（dryRun 列表带目录路径）。
+    // 鉴权同全局：Bearer bridgeToken。清理器内部四重闸（cwd 精确匹配 + 目录名/头帧
+    // id 一致 + 排除 subagent/fork/preset + 单 zstd 日志形态），绝不碰用户真实会话。
+    if (req.method === "POST" && pathname === "/maintenance/purge-headless-sessions") {
+      if (!sessionCleaner) {
+        sendJson(res, 503, { error: "session-cleaner-unavailable" });
+        return;
+      }
+      const body = await readBodyGuarded(req, res);
+      if (body === undefined) return;
+      const dryRun = body?.dryRun === true;
+      try {
+        const r = await sessionCleaner.purge({ dryRun });
+        sendJson(res, 200, {
+          ok: true,
+          dryRun,
+          purged: r.purged,
+          failed: r.failed,
+          dryRunCount: r.skippedDryRun,
+          list: r.list
+        });
+      } catch (err) {
+        // fail-safe：清理器自身不抛；这里兜一层防御（绝不拖垮 bridge）
+        log.warn("purge-endpoint-fail", { msg: String((err && err.message) || err).slice(0, 200) });
+        sendJson(res, 500, { error: "purge-failed" });
       }
       return;
     }
