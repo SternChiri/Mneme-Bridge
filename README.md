@@ -3,8 +3,6 @@
 
   # Mneme Bridge
 
-</div>
-
 **打通 DSH 与 DeepSeek 网页版的记忆 —— 一套记忆，双端共享**
 
 [![Built on mneme](https://img.shields.io/badge/built%20on-dsh--mneme-8B5CF6?style=flat-square)](https://github.com/slow-stack/mneme)
