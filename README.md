@@ -1,6 +1,9 @@
 <div align="center">
+  <img src="assets/mneme-bridge-logo.svg" width="96" alt="Mneme Bridge logo"/>
 
-# Mneme Bridge
+  # Mneme Bridge
+
+</div>
 
 **打通 DSH 与 DeepSeek 网页版的记忆 —— 一套记忆，双端共享**
 
