@@ -48,6 +48,11 @@ function defaults() {
       // 记忆条数上限；related 搜索默认条数（query 未带 topK 时生效）。
       // loadOrCreateConfig 的浅合并保证老配置文件缺这两个键时自动补默认值。
       contextPinsLimit: 5,
+      // v0.6.1：/memory/context 是否排除 sensitivity 标注记忆（上游 #363：注入出境默认不带敏感条目）
+      contextExcludeSensitive: true,
+      // v0.6.1：embedded 模式 mneme lib 版本门控（上游 #363：lib 内部签名无稳定性契约）。
+      // 语法 ^MAJOR.MINOR：major 相同且 minor ≥ 该值即放行；空串 = 关闭校验。
+      allowedLibRange: "^0.8",
       contextRelatedTopK: 6
     },
     // 对话链路的 bridge 侧去重（任务硬性要求）：sha256(user+\n+assistant) 的 LRU

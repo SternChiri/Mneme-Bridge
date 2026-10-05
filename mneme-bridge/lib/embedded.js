@@ -34,6 +34,8 @@ export class McBadRequest extends Error {
  */
 export async function createEmbeddedBackend(mnemeCfg) {
   let { libPath, dataDir } = mnemeCfg;
+  // v0.6.1：/memory/context 组装端是否排除 sensitivity 标注条目（上游 #363 安全建议，默认排除）
+  const ctxExcludeSensitive = mnemeCfg.contextExcludeSensitive !== false;
   // v0.5.40（开源化）：配置留空时自动探测常见安装位置——
   //   libPath：DSH 默认 $DSH_HOME 或 ~/.dsh 下的 profiles/web/node_modules/@modusensus/dsh-mneme/lib
   //   dataDir：同一 DSH_HOME 下的 memory 目录
@@ -53,6 +55,38 @@ export async function createEmbeddedBackend(mnemeCfg) {
   }
   if (!libPath || !dataDir) {
     throw new Error("embedded 模式需要 mneme.libPath 与 mneme.dataDir：自动探测失败（DSH 未安装或装在非常规位置）。请在 config.json 的 mneme 段手工填写，或改用 remote 模式（README「配置」）。");
+  }
+  // v0.6.1（上游 #363 建议）：版本门控——lib/ 是 src 同步产物，内部签名无稳定性契约，
+  // 行号级耦合每次发版都可能断。读安装包 package.json，超出已验证区间（allowedLibRange，
+  // 默认 "^0.8"）明确拒绝启动，提示升级 bridge 或显式放宽区间。
+  // 区间语法（自实现，不引依赖）：^MAJOR.MINOR = major 相同且 minor ≥ MINOR。
+  {
+    const range = mnemeCfg.allowedLibRange || "^0.8";
+    let pkg = null;
+    try {
+      pkg = JSON.parse(fs.readFileSync(join(libPath, "..", "package.json"), "utf8"));
+    } catch { /* package.json 读不到时跳过门控（非标准安装），日志提示 */ }
+    if (pkg && typeof pkg.version === "string") {
+      const m = pkg.version.match(/^(\d+)\.(\d+)(\.(\d+))?/);
+      const r = range.match(/^\^(\d+)\.(\d+)$/);
+      if (m && r) {
+        const [vmaj, vmin] = [Number(m[1]), Number(m[2])];
+        const [rmaj, rmin] = [Number(r[1]), Number(r[2])];
+        const ok = vmaj === rmaj && vmin >= rmin;
+        if (!ok) {
+          throw new Error(
+            "embedded: mneme lib 版本 " + pkg.version + " 超出已验证区间 " + range +
+            "（内部签名无稳定性契约，强行为之可能炸库或静默错数据）。" +
+            "请升级 mneme-bridge 到适配版本，或在 config.json mneme.allowedLibRange 显式放宽（自担风险）。"
+          );
+        }
+        log.info("lib-version-check", { version: pkg.version, range });
+      } else {
+        log.warn("lib-version-unparseable", { version: pkg.version, range });
+      }
+    } else {
+      log.warn("lib-version-unknown", { libPath });
+    }
   }
   // 逐个动态 import：某一模块缺失时错误信息能精确指到是哪个文件，
   // 便于排查「libPath 指错版本」这类部署问题。
@@ -278,6 +312,7 @@ export async function createEmbeddedBackend(mnemeCfg) {
           for (const r of service.toApiList(rows)) {
             if (pins.length >= pinsLimit) break;
             if (seen.has(r.title)) continue;
+            if (ctxExcludeSensitive && r.sensitivity !== undefined && r.sensitivity !== null && r.sensitivity !== "") continue;   // v0.6.1
             seen.add(r.title);
             pins.push(r);
           }
@@ -339,7 +374,11 @@ export async function createEmbeddedBackend(mnemeCfg) {
         if (Array.isArray(tags) && (tags.includes("meta") || tags.includes("self_referential"))) return true;
         return /^(v?\d+\.\d+|bridge|mneme[- ]?(bridge|edge)|扩展\s?0|0\.5\.\d)/i.test(String(t || ""));
       };
-      const relatedFilter = (rows) => (Array.isArray(rows) ? rows : []).filter((r) => !isMeta(r.title, r.tags));
+      // v0.6.1（上游 #363 安全建议）：sensitivity 标注的记忆不随注入出境（sensitivity 在
+      // mneme 侧只是标签、不参与可见性；context 组装端默认排除，config.contextExcludeSensitive 可关）。
+      const exclSens = ctxExcludeSensitive !== false;   // 默认 true
+      const notSensitive = (r) => !exclSens || r.sensitivity === undefined || r.sensitivity === null || r.sensitivity === "";
+      const relatedFilter = (rows) => (Array.isArray(rows) ? rows : []).filter((r) => !isMeta(r.title, r.tags) && notSensitive(r));
 
       let related = [];
       if (query) {

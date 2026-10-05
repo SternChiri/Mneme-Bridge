@@ -55,6 +55,8 @@ node server.js
     "probeTimeoutMs": 1000,
     "requestTimeoutMs": 10000,
     "contextPinsLimit": 5,
+    "contextExcludeSensitive": true,
+    "allowedLibRange": "^0.8",
     "contextRelatedTopK": 6
   },
   "conversation": { "capacity": 500 },
@@ -80,21 +82,21 @@ node server.js
 | GET | /memory/recent | `?limit=10` | mneme `GET /memories?order=chrono&limit=N` |
 | POST | /memory/conversation | `{user, assistant, url?, sessionId?}` | 合成 history 记忆（title=「网页对话：」+user 前 40 字，tags=`["web","edge"]`，source=`"edge-extension"`）；bridge 侧 sha256(user+\n+assistant) LRU 500 去重，命中直接 `200 {deduped:true}` |
 | GET | /memory/status | — | mneme /status 透传 + `backend` 字段 |
-| GET | /memory/context | `?q=&topK=`（均可省） | v0.2 组合聚合：一次返回 `{profile, rules, pins, related}`——用户画像 + 行为规则 + 高价值记忆（importance≥5，`contextPinsLimit` 条）+ 相关记忆（q 非空时搜 `contextRelatedTopK` 条）。pins/related 每条只留 `{title,content,importance,type}` 且 content 截 160 字。q 为空时 related=[]（不打搜索）。网页端首开页面调这一个路由即可拿到完整上下文 |
+| GET | /memory/context | `?q=&topK=`（均可省） | v0.2 组合聚合：一次返回 `{profile, rules, pins, related}`——用户画像 + 行为规则 + 高价值记忆（importance≥5，`contextPinsLimit` 条）+ 相关记忆（q 非空时搜 `contextRelatedTopK` 条）。pins/related 每条只留 `{title,content,importance,type}` 且 content 截 160 字。q 为空时 related=[]（不打搜索）。网页端首开页面调这一个路由即可拿到完整上下文。v0.6.1 起默认排除带 `sensitivity` 标注的条目（`contextExcludeSensitive` 可关） |
 | POST | /memory/distill | — | v0.3：手动触发一轮蒸馏（DSH headless 批量总结缓冲的网页对话）。202 受理异步执行；仅 embedded 模式可用（remote 503） |
 | POST | /memory/import | `{items:[{user,assistant,url?,sessionId?,kind?,occurred_at?}]}` | v0.4：旧会话批量导入（≤200/批）。合成 history 记忆入蒸馏缓冲；sessionId 进 tags（`imp-sess:<sid>`）供断点续跑；`kind:"summary-card"` 标记摘要卡形态。超 `maxImportChars` 返回 `400 {error:"too-large", estimateChars}` |
 | POST | /memory/import/estimate | `{items:[...]}` | v0.4：导入预估器（纯计算不落库）。返回 `{estimateChars, estimateTokens(≈chars/1.6), sessions, maxImportChars, wouldExceed}`——UI 据此渲染「预计消耗」让用户确认后才调 /memory/import |
-| POST | /maintenance/purge-headless-sessions | `{dryRun?:boolean}` | v0.6.2：列出/清除 DSH 里本桥接器 headless 蒸馏留下的单轮残留会话。`dryRun:true` 只列不删（`dryRunCount`+`list` 带目录路径）；省略则执行删除（返回 `purged/failed`）。识别走四重闸（会话 cwd 精确等于 bridge 根、目录名=头帧 id、排除 subagent/fork/preset、单/成对 zstd 日志形态），绝不碰用户真实会话 |
+| POST | /maintenance/purge-headless-sessions | `{dryRun?:boolean}` | v0.6.1：列出/清除 DSH 里本桥接器 headless 蒸馏留下的单轮残留会话。`dryRun:true` 只列不删（`dryRunCount`+`list` 带目录路径）；省略则执行删除（返回 `purged/failed`）。识别走四重闸（会话 cwd 精确等于 bridge 根、目录名=头帧 id、排除 subagent/fork/preset、单/成对 zstd 日志形态），绝不碰用户真实会话 |
 
 - type 枚举（save）：`preference / project / decision / history / rejected_solution / pitfall / constraint`
 - CORS 全放开（`*` + `OPTIONS` 预检 204）；真正的门是 token 不是 Origin。
 - 上游 4xx 透传状态码与 `error`；上游网络层不可达 → `502 {error:"mneme-unavailable"}`。
 
-## DSH 会话清理（v0.6.2，task-12）
+## DSH 会话清理（v0.6.1，task-12）
 
 蒸馏走的 `dsh --profile headless` 每次 run 都会在 DSH 的 `~/.dsh/sessions/` 里
 落一个单轮持久会话（headless runner 无「不保留会话」参数，DSH 0.2.0-rc.2 实测），
-日积月累在 DSH 工作区列表堆出几百个「未分组」残留。bridge 从 v0.6.2 起：
+日积月累在 DSH 工作区列表堆出几百个「未分组」残留。bridge 从 v0.6.1 起：
 
 - **自动清理**：每轮蒸馏结束后自动移除本轮及历史蒸馏残留（fail-safe，失败只记日志）。
 - **手动清理**：`POST /maintenance/purge-headless-sessions`（`dryRun:true` 预览）。

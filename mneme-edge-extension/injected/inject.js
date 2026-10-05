@@ -7,7 +7,7 @@
 //      一眼看出匹配规则差在哪。
 //   D. 记忆收集：SSE 容错解析（delta.content/v/content/text，失败退化递归收集）。
 'use strict'
-  console.log('[mneme/inj] inject script 版本 0.6.0');
+  console.log('[mneme/inj] inject script 版本 0.6.1');
 ;
 (function () {
   if (window.__MNEME_INJ__) return;
@@ -21,9 +21,11 @@
   const CTX_TTL_MS = 60000;
   let seq = 0;
 
+  let bgNonce = '';   // v0.6.1：content 下发的一次性握手 nonce，bg 命令必带（空=未握手）
   let injectMode = 'implicit';   // v0.5.34：inject 层感知注入方式——visible 时 implicit 改写必须让位
   window.addEventListener('mneme-ext:cmd', (e) => {
     const d = e.detail || {};
+    if (d.type === 'nonce' && typeof d.nonce === 'string') bgNonce = d.nonce;   // v0.6.1：握手
     if (typeof d.debug === 'boolean') debug = d.debug;
     if (d.injectMode === 'visible' || d.injectMode === 'implicit') injectMode = d.injectMode;
     if (d.type === 'ctx' && d.key !== undefined) {
@@ -745,7 +747,7 @@
   function bgSend(msg, cb) {
     var id = 'bg' + (++__bgSeq);
     __bgPending[id] = cb;
-    window.dispatchEvent(new CustomEvent('mneme-ext:cmd', { detail: { type: 'bg', id: id, msg: msg } }));
+    window.dispatchEvent(new CustomEvent('mneme-ext:cmd', { detail: { type: 'bg', id: id, nonce: bgNonce, msg: msg } }));   // v0.6.1：nonce 握手
     // 兜底超时：content 侧异常时回调 null
     setTimeout(function () { if (__bgPending[id]) { delete __bgPending[id]; cb(null); } }, 30000);
   }

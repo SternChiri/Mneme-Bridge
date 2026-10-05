@@ -11,7 +11,9 @@
     "probeTimeoutMs": 1000,
     "requestTimeoutMs": 10000,
     "contextPinsLimit": 5,
-    "contextRelatedTopK": 6
+    "contextRelatedTopK": 6,
+    "contextExcludeSensitive": true,
+    "allowedLibRange": "^0.8"
   },
   "conversation": {
     "capacity": 500

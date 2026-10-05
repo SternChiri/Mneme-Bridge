@@ -26,7 +26,7 @@
 | **mneme-bridge** | 本地 Node 服务 | 捕获对话 → 调用 DSH 蒸馏 → 读写记忆库 → 给扩展提供检索接口 |
 | **Mneme Bridge for DeepSeek** | Edge / Chrome 扩展 | 注入记忆到网页对话、把对话回传、提供侧栏管理面板 |
 
-> **记忆基座**：本项目的记忆池是上游 **[mneme](https://github.com/slow-stack/mneme)**（DSH 的记忆插件，MIT）——存储、去重合并、冲突裁决、语义检索全部由它负责，本项目**不复制、不改造、不另建存储**，只通过它的 API 读写。
+> **记忆基座**：本项目的记忆池是上游 **[mneme](https://github.com/slow-stack/mneme)**（DSH 的记忆插件，MIT）——存储、巩固、去重合并、冲突裁决、语义检索全部由它负责，本项目**不复制、不改造、不另建存储**，只通过它的 API 读写。
 >
 > **本项目不是 DSH 插件**，也不安装在 DSH 内部。它是独立的浏览器扩展 + 本地服务，在 mneme 之外补上"网页端接入"这一层能力。
 
@@ -215,6 +215,8 @@ cd Mneme-Bridge
 | `bridgeToken` | 首次启动随机生成 | 扩展鉴权凭证 |
 | `mneme.mode` | `auto` | auto（探测 DSH API）/ embedded / remote |
 | `mneme.libPath` / `dataDir` | 空（自动探测） | embedded 模式的记忆库位置 |
+| `mneme.contextExcludeSensitive` | `true` | 注入（/memory/context）是否排除带 sensitivity 标注的记忆——敏感条目不随每轮请求发往网页端 |
+| `mneme.allowedLibRange` | `^0.8` | embedded 模式 mneme lib 版本门控；超出区间拒绝启动。空串关闭校验 |
 | `distill.enabled` | `true` | 关掉即完全停止蒸馏 |
 | `distill.idleMs` | 10 分钟（未写进生成的 config 时按此兜底） | 会话静默多久后触发蒸馏 |
 | `distill.dshCommand` | `dsh` | 蒸馏用的 LLM 命令 |
@@ -254,11 +256,19 @@ node server.js
 - 数据全部在本机（SQLite + 本地文件），**不上传任何第三方**
 - 服务默认只监听本地/局域网，Bearer token 鉴权；**仅限局域网使用，切勿暴露公网**
 - 唯一的外发请求是蒸馏（调用你配置的模型 API，内容为对话原文）——介意可关闭 `distill.enabled`，只用手动导入与检索
+- **注入出境**：每次对话会把注入块（用户画像 / 行为规则 / 交互偏好 / 话题相关记忆）拼进请求发往 DeepSeek 服务器——这是「网页端带上记忆」的本来含义。带 `sensitivity` 标注的记忆默认**不**进入注入块（`mneme.contextExcludeSensitive`），介意数据出境可关闭注入
+- **页面脚本风险**：扩展的注入层运行在页面主世界，与面板层经页面事件通信。恶意网页脚本理论上可伪造该事件读出记忆库（无需 bridgeToken）。已加一次性握手 nonce 提高门槛，但这是缓解而非强隔离——**只在你信任的站点开启采集**
 
 ## 🗺️ 已知边界
 
 - 网页端 DOM / 接口改版可能需要更新扩展选择器（扩展内置探针日志辅助定位）
 - DSH headless CLI 的凭证需单独配置（首次蒸馏时按日志提示）
+- 记忆的**巩固（dream）由 [mneme](https://github.com/slow-stack/mneme) 侧负责**——桥接服务只做沉淀与检索，不运行巩固循环
+- 网页端对话**不进实体表**（实体抽取器由 DSH 宿主接线，桥接侧拿不到），实体检索通道看不见网页记忆
+- 桥接蒸馏的条目**绕过 DSH 宿主的质量闸**（归档/降权与写入准入），纯度依赖蒸馏 prompt 对齐
+- 共享是**不对称**的：网页端写入全局记忆（所有 DSH 会话可见）；DSH 侧标注了 agent 作用域的记忆对网页端不可见——「网页进全局、只读全局」，不是双向全量同步
+- `saveWithDedupe` 去重是先查后写（库层无唯一约束），两个进程并发写同一标题存在极小的重复概率
+- 会话清理器按内部格式识别本桥接产生的残留会话，属**实验性**能力（四重闸防误删）
 - **移动端尚未实现**——路线图上，欢迎 PR
 
 ## 🙏 致谢

@@ -4,14 +4,26 @@
 
 | 组件 | 形态 | 版本 |
 |---|---|---|
-| **mneme-bridge** | 本地 Node 服务（托盘常驻） | 0.6.0 |
-| **mneme-bridge-ext** | Edge / Chrome 扩展（MV3） | 0.6.0 |
+| **mneme-bridge** | 本地 Node 服务（托盘常驻） | 0.6.1 |
+| **mneme-bridge-ext** | Edge / Chrome 扩展（MV3） | 0.6.1 |
 
 版本号规则：小修 → `0.6.x`；新功能 → `0.7.0`；破坏性变更 → `1.0.0`（留给三端全通之日）。
 
 ---
 
-## v0.6.2 — headless 蒸馏会话不残留（mneme-bridge）
+## v0.6.1 — 安全加固与 headless 会话不残留
+
+### 🔐 安全（上游 Discussion #363 维护者建议）
+
+- **页面脚本伪造防护（扩展）**：注入层与面板层之间的 `bg` 命令转发加一次性握手 nonce——chat.deepseek.com 上任何页面脚本此前可伪造事件经面板层代发 bridge 命令读出记忆库（无需 bridgeToken）。现为缓解措施而非强隔离，README「隐私与安全」已明示
+- **敏感记忆不出境（桥接）**：`/memory/context` 组装端默认排除带 `sensitivity` 标注的记忆，敏感条目不再随每轮请求发往 DeepSeek 服务器。新配置 `mneme.contextExcludeSensitive`（默认 `true`），embedded / remote 两模式同口径
+- **数据流向与已知限制文档化**：README 补记注入出境说明、巩固（dream）归属 DSH 侧、网页记忆不进实体表、绕过宿主质量闸、「网页进全局、只读全局」的 scope 不对称、saveWithDedupe 并发重复概率、会话清理实验性标注
+
+### 🛡️ mneme lib 版本门控（桥接）
+
+- embedded 模式装载 mneme lib 前校验版本（读安装包 package.json，`mneme.allowedLibRange` 默认 `^0.8`）——lib 内部签名无稳定性契约，上游发版不再可能静默炸断桥接；超出区间明确报错并提示放宽方式
+
+## v0.6.1 内（原 v0.6.2 段，随本版首次发布）—— headless 蒸馏会话不残留（mneme-bridge）
 
 ### 🧹 DSH 会话清理（task-12）
 

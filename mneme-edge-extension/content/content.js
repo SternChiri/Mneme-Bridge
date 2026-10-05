@@ -57,6 +57,12 @@
   function pushCmd(detail) {
     window.dispatchEvent(new CustomEvent('mneme-ext:cmd', { detail }));
   }
+  // ---- v0.6.1：'bg' 转发一次性握手 nonce（上游 Discussion #363 安全建议）----
+  // 页面任意脚本可伪造 mneme-ext:cmd type:'bg' 经本脚本代发 bridge 命令读记忆库。
+  // 本脚本（isolated world）每次页面加载生成随机 nonce 并广播一次给 inject.js，
+  // 此后只转发携带正确 nonce 的 bg 命令。局限：提高门槛非强隔离（README「安全说明」）。
+  const BG_NONCE = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+  setTimeout(() => pushCmd({ type: 'nonce', nonce: BG_NONCE }), 0);
   window.addEventListener('mneme-ext:event', (e) => {
     const d = e.detail || {};
     if (d.type === 'conversation') onConversation(d);
@@ -308,7 +314,7 @@
     retrySend: retrySend,
     dbg: dbg
   };
-  console.log('[mneme/cs] content script 版本 0.6.0 mode=' + cfgCache.injectMode); dbg('content script 就绪 (v0.2, mode=' + cfgCache.injectMode + ')');
+  console.log('[mneme/cs] content script 版本 0.6.1 mode=' + cfgCache.injectMode); dbg('content script 就绪 (v0.2, mode=' + cfgCache.injectMode + ')');
 })();
 
 // ====================================================================
@@ -1608,6 +1614,7 @@
   window.addEventListener('mneme-ext:cmd', function (e) {
     var d = e.detail || {};
     if (d.type !== 'bg') return;
+    if (d.nonce !== BG_NONCE) { if (cfgCache.debug) dbg('bg 命令 nonce 校验失败，丢弃'); return; }   // v0.6.1：握手校验
     var id = d.id;
     try {
       chrome.runtime.sendMessage(d.msg, function (r) {

@@ -122,7 +122,11 @@ export function createRemoteBackend(mnemeCfg) {
      * 聚合路由的子项失败不拖垮整体，语义对齐 embedded 的 try/catch 降级。
      */
     async context(q, topK) {
-      const slim = (items) => (Array.isArray(items) ? items : []).map((m) => ({
+      // v0.6.1（上游 #363 安全建议）：sensitivity 标注条目默认不进注入出境（config.mneme.contextExcludeSensitive 可关）
+      const exclSens = mnemeCfg.contextExcludeSensitive !== false;
+      const slim = (items) => (Array.isArray(items) ? items : [])
+        .filter((m) => !exclSens || m.sensitivity === undefined || m.sensitivity === null || m.sensitivity === "")
+        .map((m) => ({
         title: m.title,
         content: m.content != null ? String(m.content).slice(0, 160) : "",
         importance: m.importance,
