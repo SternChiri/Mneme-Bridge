@@ -1,5 +1,5 @@
 // mneme bridge 扩展 —— 后台 service worker：全扩展唯一的网络出口。
-// v0.2：新增 getContext（组合检索：画像/规则/高价值/相关），老 bridge 自动回退
+// getContext（组合检索：画像/规则/高价值/相关），老 bridge 自动回退
 // search/recent。重试队列（alarms）与去重逻辑不变。
 'use strict';
 
@@ -82,7 +82,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (q.length) await scheduleRetry();
 });
 
-// ---- 检索：v0.2 组合检索（画像+规则+高价值+相关），老 bridge 回退 search/recent ----
+// ---- 检索：组合检索（画像+规则+高价值+相关），老 bridge 回退 search/recent ----
 async function getContext(text) {
   const key = String(text || '').slice(0, 120);
   if (ctxCache.data && ctxCache.key === key && (Date.now() - ctxCache.at) < CTX_TTL_MS) {
@@ -98,7 +98,7 @@ async function getContext(text) {
       related: Array.isArray(r.related) ? r.related : []
     };
   } catch (e) {
-    // 老版 bridge 没有 /memory/context（404）或 bridge 未起：退回 v0.1 路径
+    // 老 bridge 没有 /memory/context（404）或 bridge 未起：退回 search/recent 直查路径
     log('context 回退:', String(e.message || e));
     let items = [];
     try {
@@ -152,7 +152,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg.type === 'getContext') {
         sendResponse({ ok: true, ctx: await getContext(msg.text) });
       } else if (msg.type === 'getMemory') {
-        // v0.1 兼容消息：映射到 context 的 related 字段
+        // 旧消息协议兼容：映射到 context 的 related 字段
         const ctx = await getContext(msg.text);
         sendResponse({ ok: true, items: ctx.related });
       } else if (msg.type === 'saveConversation') {
@@ -161,12 +161,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         try { const r = await bridge('/health'); sendResponse({ ok: true, r }); }
         catch (e) { sendResponse({ ok: false, error: String(e) }); }
       } else if (msg.type === 'getList') {
-        // v0.3.18（面板增强②）：按类型/分组列出记忆（GET /memory/list?type=X|types=A,B&limit=N）
+        // 按类型/分组列出记忆（GET /memory/list?type=X|types=A,B&limit=N）
         // 验证：面板「记忆库」分组标签切换时列表内容随之变化。
         try {
           const lim = Math.min(Math.max(parseInt(msg.limit, 10) || 50, 1), 200);
           const qs = [];
-          // v0.3.23：记忆类型走 memType（此前用 msg.type 会被消息类型字段覆盖 → 请求变成 {type:'preference'}）
+          // 记忆类型走 memType（msg.type 会被消息类型字段覆盖 → 请求变成 {type:'preference'}）
           const memType = msg.memType || msg.memtype || null;
           if (memType) qs.push('type=' + encodeURIComponent(memType));
           if (msg.types) qs.push('types=' + encodeURIComponent(msg.types));
@@ -175,14 +175,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true, items: (r && r.items) || [], total: (r && r.total) || 0 });
         } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
       } else if (msg.type === 'getImportedIds') {
-        // v0.5.17：已入库会话集合（导入列表隐藏用）
+        // 已入库会话集合（导入列表隐藏用）
         try {
           const res = await fetch((await cfg()).bridgeUrl.replace(/\/+$/, '') + '/memory/imported-ids', { headers: { Authorization: 'Bearer ' + (await cfg()).token } });
           const j = await res.json();
           sendResponse({ ok: res.ok, ids: (j && j.ids) || [] });
         } catch (e) { sendResponse({ ok: false, ids: [] }); }
       } else if (msg.type === 'deletePending') {
-        // v0.5.13：删除缓冲条目（DELETE /memory/pending?id=）
+        // 删除缓冲条目（DELETE /memory/pending?id=）
         try {
           const res = await fetch((await cfg()).bridgeUrl.replace(/\/+$/, '') + '/memory/pending?id=' + encodeURIComponent(msg.id), {
             method: 'DELETE',
@@ -191,14 +191,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: res.ok });
         } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
       } else if (msg.type === 'getPending') {
-        // v0.4.4：缓冲队列查看（GET /memory/pending?limit=N）
+        // 缓冲队列查看（GET /memory/pending?limit=N）
         try {
           const lim = Math.min(Math.max(parseInt(msg.limit, 10) || 100, 1), 500);
           const r = await bridge('/memory/pending?limit=' + lim);
           sendResponse({ ok: true, items: (r && r.items) || [], total: (r && r.total) || 0 });
         } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
       } else if (msg.type === 'getRecent') {
-        // v0.2.9 悬浮面板：最近记忆列表（GET /memory/recent?limit=10）
+        // 最近记忆列表（GET /memory/recent?limit=10）
         // 验证：面板「最近记忆/刷新」或 curl http://127.0.0.1:8760/memory/recent?limit=10
         try {
           const lim = Math.min(Math.max(parseInt(msg.limit, 10) || 10, 1), 50);
@@ -206,7 +206,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true, items: (r && r.items) || [] });
         } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
       } else if (msg.type === 'triggerDistill') {
-        // v0.2.9 悬浮面板：立即蒸馏（桩位）。bridge 侧蒸馏触发路由由 Lead 并行添加；
+        // 立即蒸馏。触发 bridge 的 /memory/distill 路由；
         // bridge 无此路由时这里会 404 → ok:false，面板只提示不重试不入队（仅提示已发送，不强报结果）。
         // 验证：面板点「立即蒸馏」→ bridge 日志应出现蒸馏动作或 404 记录（桩位期）。
         try {
@@ -214,21 +214,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true, sent: true });
         } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
       } else if (msg.type === 'importBatch') {
-        // v0.3.1 旧会话导入（task-6）：单批写入（items ≤200，由 injected 侧切好）。
+        // 旧会话导入：单批写入（items ≤200，由 injected 侧切好）。
         // 验证：面板导入流程跑通时 bridge 日志应出现 POST /memory/import。
         try {
           const r = await bridge('/memory/import', { method: 'POST', body: msg.body });
           sendResponse({ ok: true, r });
         } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
       } else if (msg.type === 'importEstimate') {
-        // v0.3.14（task-8 L3）：导入预估 → POST /memory/import/estimate
+        // 导入预估 → POST /memory/import/estimate
         // bridge-dev 并行实现；无此路由 404 → ok:false（content 降级为本地字数估算）
         try {
           const r = await bridge('/memory/import/estimate', { method: 'POST', body: msg.body });
           sendResponse({ ok: true, r });
         } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
       } else if (msg.type === 'openOptions') {
-        // v0.2.9 悬浮面板「打开设置页」：content script 没有 openOptionsPage 权限，必须走 background。
+        // 「打开设置页」：content script 没有 openOptionsPage 权限，必须走 background。
         try {
           chrome.runtime.openOptionsPage(() => { void chrome.runtime.lastError; sendResponse({ ok: true }); });
         } catch (e) { sendResponse({ ok: false, error: String(e) }); }

@@ -1,14 +1,13 @@
-// lib/distiller.js —— 对话蒸馏器（v0.3；v0.4 会话级断点续跑 + 摘要卡提示词）
+// lib/distiller.js —— 对话蒸馏器（会话级断点续跑 + 摘要卡提示词）
 // 职责：把缓冲的网页对话按会话分组，交给 DSH headless 批量蒸馏成 mneme 记忆条目
 // （JSON 数组），经 backend.save 入库并把原始对话标记为已蒸馏。
 // LLM 来源：DSH headless（dsh --profile headless，stdin 传任务，stdout 出答案）。
-// 全自动触发：dsh-probe.js 探测到 DSH (3080) 就绪后调用 runIfPending()；
-// DSH 没开就静默缓冲，什么都不发生（用户需求：完全自动化）。
-// v0.4（task-9）：
+// 全自动触发：dsh-probe.js 检测到有待蒸缓冲后调用 runIfPending()；
+// DSH 不在就静默缓冲。
 //   ①会话级断点续跑——蒸馏前查会话标记（tags 的 imp-sess:<sid>distilled），
 //     已完成会话整组跳过；中断重跑不重复烧 API。
 //   ②摘要卡输入形态识别——条目带 distill_kind:"summary-card" 时换用「提炼跨
-//     会话持久偏好/项目脉络/重要决定，单会话细节丢弃」提示词（三层漏斗 L3）。
+//     会话持久偏好/项目脉络/重要决定，单会话细节丢弃」提示词。
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { writeFileSync, unlinkSync } from "node:fs";
@@ -23,10 +22,9 @@ export function createDistiller(opts) {
   const config = opts.config;
   const backend = opts.backend;
   const loadPending = opts.loadPending;
-  const loadAllPending = opts.loadAllPending;   // v0.5.11：手动「立即蒸馏」强制全量
+  const loadAllPending = opts.loadAllPending;   // 手动「立即蒸馏」强制全量
   const markDistilled = opts.markDistilled;
-  // v0.4 会话级断点续跑 API（server.js 从 pendingStore 注入；未注入时退化为
-  // 无会话记忆——行为与 v0.3 一致，不影响单测直连构造）
+  // 会话级断点续跑 API（server.js 从 pendingStore 注入；未注入时退化为无会话记忆）
   const isSessionDone = opts.isSessionDone || null;
   const markSessionDone = opts.markSessionDone || null;
   let running = false;
@@ -43,8 +41,8 @@ export function createDistiller(opts) {
       const extraArgs = Array.isArray(dc.dshArgs) ? dc.dshArgs : [];
       const quote = (s) => (/s/.test(s) ? '"' + s + '"' : s);
       let child;
-      // v0.5.9e：task 经临时文件送达（headless agent 有 Read 工具，实测可读）。
-      // argv 直传 5.5 万字符会 ENAMETOOLONG（Windows 32K 上限）；CLI 0.1.x 又不支持 stdin task。
+      // task 经临时文件送达（headless agent 有 Read 工具可读）。
+      // argv 直传大任务会 ENAMETOOLONG（Windows 32K 上限）。
       const taskFile = join(tmpdir(), "mneme-distill-" + Date.now() + ".txt");
       writeFileSync(taskFile, task, "utf8");
       const argvTask = "读取文件 " + taskFile + " ，严格按文件内容中的指示完成蒸馏任务，只输出指示要求的 JSON。";
@@ -56,7 +54,7 @@ export function createDistiller(opts) {
           shell: true
         });
       } else {
-        // v0.5.9d：task 走 stdin + "-" 参数（0.1.x CLI 支持；argv 直传 5.5 万字符会 ENAMETOOLONG）
+        // 非 Windows：task 走 stdin + "-" 参数（argv 直传大任务会 ENAMETOOLONG）
         const args = extraArgs.concat(["--profile", "headless", "-"]);
         child = spawn(dc.dshCommand || "dsh", args, {
           stdio: ["pipe", "pipe", "pipe"],
@@ -78,8 +76,6 @@ export function createDistiller(opts) {
         if (code === 0) resolve(out);
         else reject(new Error("dsh headless exit " + code + ": " + err.slice(-400)));
       });
-      // v0.5.9c：0.1.x headless CLI 的 task 是命令行参数（不是 stdin）——
-      // stdin 喂法会报 "a task is required" 秒退（write EOF 根因）。task 直接进 argv。
       child.stdin.end();
     });
   }
@@ -110,7 +106,7 @@ export function createDistiller(opts) {
     try {
       arr = JSON.parse(chunk);
     } catch {
-      // 对齐上游 issue #339 修复：中段一处语法错误不该让整窗记忆静默丢失。
+      // 对齐上游修复：中段一处语法错误不该让整窗记忆静默丢失。
       // 括号配对扫描截出完整顶层对象逐个 parse，救活多少算多少；截出 0 个
       // 不视为「模型显式说无内容」（那是 ok:true 专属于真实空数组的语义）。
       arr = salvageArrayItems(chunk);
@@ -148,7 +144,7 @@ export function createDistiller(opts) {
   }
 
   /**
-   * 坏 JSON 抢救扫描器（复刻上游 summarize.js salvageArrayItems，issue #339）：
+   * 坏 JSON 抢救扫描器（复刻上游 summarize.js salvageArrayItems）：
    * 截出每个完整的顶层 {...} span 独立 parse。两遍扫描合并去重——
    *   第一遍 string-aware（字符串值里合法含 { } 的对象走它救回）；
    *   第二遍完全忽略字符串状态——带奇数个引号（stray quote）的坏对象第一遍
@@ -169,7 +165,7 @@ export function createDistiller(opts) {
   }
 
   function scanBraceSpans(chunk, respectStrings) {
-    // 对齐上游（CodeRabbit review on #350）：只接受「最外层数组的直接子对象」——
+    // 对齐上游：只接受「最外层数组的直接子对象」——
     // 候选 { 必须满足 arrayDepth===1 && objDepth===0 且前一非空白 token 是 [ 或
     // ,。否则嵌套子数组里的对象会被误捞、字符串值里的 } 会提前断 span。
     // 误拦的代价只是少救回（安全侧），误捞的代价是写进假记忆。
@@ -237,15 +233,14 @@ export function createDistiller(opts) {
   }
 
   /**
-   * 组蒸馏任务（记忆类型标准对齐 mneme 七型）。
-   * v0.4 双形态：
+   * 组蒸馏任务（记忆类型标准对齐 mneme 七型）。双形态：
    * - isCard=false（全文对话，实时链路或旧导入）：逐轮编号，常规蒸馏。
    * - isCard=true（摘要卡，L2 产物）：提示词换成「提炼跨会话的持久偏好/项目
    *   脉络/重要决定；单会话细节一律丢弃」——卡片两端信息密度高，但单卡细节
    *   不值得进记忆库（设计文档「为什么不会丢有用信息」节）。
    */
   function buildTask(entries, isCard) {
-    // v0.5：与 mneme 官方 summarize 管线对齐——
+    // 与 mneme 官方 summarize 管线对齐——
     //   prompt 逐字复用 mneme lang.js PROMPTS.summary/codingSummary（zh）；
     //   transcript 用官方格式（用户：/助手：全角冒号）；
     //   产出 = 官方原子记忆（type 白名单、importance 1-5、JSON 数组）。
@@ -269,7 +264,7 @@ export function createDistiller(opts) {
         transcript
       ].join("\n");
     }
-    // v0.6.1：正文 = 上游 mneme lang.js PROMPTS.codingSummary.zh 逐字对齐（涵盖
+    // 正文 = 上游 mneme lang.js PROMPTS.codingSummary.zh 逐字对齐（涵盖
     // 通用 + 编码场景：原子记忆原则、七型 JSON 形态、编码三型提取思路）；bridge
     // 侧补充（transcript 形态 / 反复述防御）单独成节标注，不加进上游口径文本里。
     return [
@@ -291,7 +286,7 @@ export function createDistiller(opts) {
     ].join("\n");
   }
   /** 主入口：有待蒸馏对话时执行一轮蒸馏（探测器触发或手动）。 */
-  let runQueue = Promise.resolve();   // v0.5.11b：蒸馏请求串行排队（撞锁不再静默丢弃）
+  let runQueue = Promise.resolve();   // 蒸馏请求串行排队（撞锁不再静默丢弃）
   async function runIfPending(force) {
     if (running) {
       log.info("distill-queued");   // 排队而非丢弃：上一轮结束后本请求自动执行
@@ -308,7 +303,7 @@ export function createDistiller(opts) {
       log.info("distill-load", { force: !!force, count: entries.length, via: force && typeof loadAllPending === 'function' ? 'all' : 'idle' });
       if (!entries.length) return { skipped: "empty" };
 
-      // ---- 会话级断点续跑（v0.4）--------------------------------------------
+      // ---- 会话级断点续跑--------------------------------------------
       // 蒸馏前先剔掉已完成会话：中断（进程被杀/DSH 中途离线/断电）后重跑时，
       // 已蒸馏会话不再二次烧 API；同会话迟到批次（扩展分批上报 >MAX_BATCH 的
       // 大会话）同样跳过。跳过决策发生在 load 之后、任何 LLM 调用之前。
@@ -319,9 +314,8 @@ export function createDistiller(opts) {
         const skippedSids = new Set();
         pool = entries.filter((e) => {
           if (!e.session_id) return true;      // 无会话标记的条目不参与会话级跳过
-          // v0.5.23 修复：此前这里「同会话只保留首条」——配合下文的 markSessionDone(整会话排空)，
-          // 导致一个 69 轮会话只蒸第 1 轮，其余 68 条被静默标 done（内容永久丢失）。
-          // 正确语义：同一会话的全部待蒸条目都要进 pool（随后按会话分组一次蒸馏）。
+          // 同一会话的全部待蒸条目都要进 pool（随后按会话分组一次蒸馏）；
+          // 若「同会话只保留首条」，配合 markSessionDone 排空会把其余条目静默标 done。
           const __isd = isSessionDone(e.session_id);
           if (__isd) {
             skippedSessions++;
@@ -331,7 +325,7 @@ export function createDistiller(opts) {
           return true;
         });
         if (skippedSids.size > 0) {
-          // 被跳过会话的迟到条目也要标 distilled：会话已由此前批次蒸馏过，
+          // 被跳过会话的迟到条目也要标 distilled：会话已由更早批次蒸馏过，
           // 迟到批次不再烧 API（任务要求）；不标记则它们永久滞留 pending，
           // 每轮 load 都捞出来再跳一遍，状态机永远排不空。
           const skippedIds = entries
@@ -351,7 +345,7 @@ export function createDistiller(opts) {
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(e);
       }
-      // v0.5.21：null-sid 的 historical 原料全部落到 "default" 桶（不是真实会话），
+      // null-sid 的 historical 原料全部落到 "default" 桶（不是真实会话），
       // 大批量重蒸时会塞成一次巨型 headless 调用（易截断/超时）。按 24 条分块摊平。
       if (groups.has("default") && groups.get("default").length > 24) {
         const bucket = groups.get("default");
@@ -371,7 +365,7 @@ export function createDistiller(opts) {
           const task = buildTask(group, isCard);
           const timeoutMs = (config.distill && config.distill.headlessTimeoutMs) || 240000;
           const out = await runHeadless(task, timeoutMs);
-          // v0.6.1：解析对齐上游 parseSummaryJsonResult——ok 语义决定窗口消费：
+          // 解析对齐上游 parseSummaryJsonResult——ok 语义决定窗口消费：
           //   ok:false → 不标 distilled，下轮重试同一窗口（对齐上游「解析失败不推进 seq」）；
           //   ok:true（含显式空数组与 salvage 救回条数>0）→ 正常落库 + 标记。
           const parsed = parseSummaryJsonResult(out);
@@ -380,14 +374,13 @@ export function createDistiller(opts) {
             failedGroups++;
             continue;
           }
-          // salvaged（坏 JSON 抢救回条目）与 invalid/empty 计数进审计与日志——
-          // 对齐上游 audit.metadata 口径（json_salvaged/parsed）。
+          // salvaged（坏 JSON 抢救回条目）与 invalid/empty 计数进审计与日志。
           if (parsed.salvaged) writeAudit({ sid, status: "success", error_message: null, metadata: { json_salvaged: true, parsed: parsed.arrLen, invalid: parsed.invalid, kept: parsed.entries.length } });
           const items = parsed.entries;
           for (const it of items) {
-            // v0.3.37：正式记忆继承会话归属——
+            // 正式记忆继承会话归属——
             //   ① tags 继承源条目的 imp-sess:<sid>（面板/检索可按会话过滤、溯源到原始会话）
-            //   ② occurred_at 用源条目的会话时间（此前用蒸馏时刻，丢失了"这条记忆来自何时"）
+            //   ② occurred_at 用源条目的会话时间（保留"这条记忆来自何时"）
             const sessTags = group
               .flatMap((e) => (Array.isArray(e.tags) ? e.tags : []))
               .filter((t) => typeof t === "string" && (t.startsWith("imp-sess:") || t === "summary-card" || t === "import" || t === "edge"));
@@ -395,7 +388,7 @@ export function createDistiller(opts) {
               for (const e of group) {
                 const v = e.occurred_at || e.created_at;
                 if (!v) continue;
-                // v0.3.38：统一 ISO（数字秒/毫秒 → ISO；字符串验证可解析）
+                // 统一 ISO（数字秒/毫秒 → ISO；字符串验证可解析）
                 if (typeof v === "number" && isFinite(v) && v > 0) {
                   const ms = v >= 1e12 ? v : v > 1e9 ? v * 1000 : 0;
                   if (ms) return new Date(ms).toISOString();
@@ -405,7 +398,7 @@ export function createDistiller(opts) {
               }
               return null;
             })();
-            // v0.6.1：it 已在 parseSummaryJsonResult 按上游口径净化（七型白名单、
+            // it 已在 parseSummaryJsonResult 按上游口径净化（七型白名单、
             // title/content trim 非空、importance 整数夹取 1..5 非整数→3）；这里只做
             // bridge 侧列宽裁剪（title 60 / content 1000，schema 列宽）与来源拼接。
             const memory = {
@@ -414,12 +407,12 @@ export function createDistiller(opts) {
               content: it.content.slice(0, 1000) +
                 "\n\n(蒸馏自 " + group.length + " 轮网页对话" + (sid !== "default" ? "，会话 " + sid.slice(0, 8) : "") + (isCard ? "，摘要卡形态" : "") + ")",
               importance: it.importance,   // 已按上游口径夹取（整数 1..5，非整数→3）
-              tags: (it.tags.slice(0, 4))   // v0.3.38：LLM tags ≤4（会话标记另加，总量 ≤9）
+              tags: (it.tags.slice(0, 4))   // LLM tags ≤4（会话标记另加，总量 ≤9）
                 .concat(sessTags.filter((t) => !it.tags || !it.tags.includes(t)).slice(0, 4))
                 .concat(["distilled"]),
-              // v0.5.18：source 带会话短 id（对齐 DSH 内记忆的 source=会话id 形态——
-              // mneme UI 来源列直接可读；无 sid 时保持 dsh-distiller）
-              // v0.5.21：legacy#N 是 null-sid 原料的合成分块键（非真实会话）——不写入来源
+              // source 带会话短 id（对齐 DSH 内记忆的 source=会话id 形态——
+              // mneme UI 来源列直接可读）；legacy#N 是 null-sid 原料的合成分块键
+              // （非真实会话）——不写入来源
               source: (sid !== "default" && !sid.startsWith("legacy#")) ? "dsh-distiller:web/" + sid.slice(0, 8) : "dsh-distiller",
               occurred_at: sessTime || new Date().toISOString()
             };
@@ -430,7 +423,7 @@ export function createDistiller(opts) {
           // 会话级登记：即使该会话还有后续批次没上报，先到的条目已足以让
           // 下轮跳过（isSessionDone 查「任一完成」）。markSessionDone 幂等。
           if (markSessionDone && sid !== "default") {
-            // v0.5.23：不再整会话排空——批量上限可能截断会话，排空会把未蒸馏条目一起标 done。
+            // 不整会话排空——批量上限可能截断会话，排空会把未蒸馏条目一起标 done。
         // 只标本组已蒸馏的 id；会话是否完成由 buffer.isSessionDone（零 pending）判定。
           }
           log.info("distill-group-done", { sid: sid.slice(0, 8), entries: group.length, items: items.length, card: isCard, salvaged: parsed.salvaged });
@@ -439,7 +432,7 @@ export function createDistiller(opts) {
           log.warn("distill-group-fail", { sid: sid.slice(0, 8), msg: String((err && err.message) || err).slice(0, 200) });
         }
       }
-      // v0.6.2（task-12）：本轮蒸馏全部结束后的外围清理——移除 DSH 里本桥接器
+      // 本轮蒸馏全部结束后的外围清理——移除 DSH 里本桥接器
       // headless 蒸馏留下的单轮残留会话（识别/删除全在 session-cleaner.js，
       // 四重闸防误删；minAgeMs 跳过刚写完的目录防并发竞态）。fail-safe：任何
       // 失败只记日志，绝不影响蒸馏结果返回。

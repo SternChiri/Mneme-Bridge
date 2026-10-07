@@ -1,8 +1,7 @@
-// lib/dsh-probe.js —— 自动蒸馏触发器（v0.5.9，用户裁决重构）
-// 裁决：DSH headless 是独立 CLI（与 DSH 桌面应用/Web 3080 无关），蒸馏不需要"等 DSH 启动"。
+// lib/dsh-probe.js —— 自动蒸馏触发器
+// DSH headless 是独立 CLI（与 DSH 桌面应用/Web 3080 无关），蒸馏不需要"等 DSH 启动"。
 // 新语义：bridge 周期检查缓冲队列——有 pending 就直接尝试蒸馏（立即入库）；
 // headless 调用失败（网络/API 异常）时下轮再试，原料永不丢失。
-// 旧版"探测 3080 上线跳变"已废弃（0.2.0-rc.2 桌面应用不开 3080，探测永远离线）。
 import net from "node:net";
 import { loggerFor } from "./log.js";
 

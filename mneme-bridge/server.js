@@ -21,14 +21,14 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 const B_ROOT = dirname(fileURLToPath(import.meta.url));   // bridge 根目录
 import { loggerFor } from "./lib/log.js";
-// v0.3：全自动对话蒸馏器（B 路线）——DSH headless 批量总结缓冲的网页对话
+// 全自动对话蒸馏器——DSH headless 批量总结缓冲的网页对话
 import { createDistiller } from "./lib/distiller.js";
-// v0.6.2（task-12）：DSH headless 蒸馏会话清理（列/清残留单轮会话，四重闸防误删）
+// DSH headless 蒸馏会话清理（列/清残留单轮会话，四重闸防误删）
 import { createSessionCleaner } from "./lib/session-cleaner.js";
 import { createImportHandler } from "./lib/importer.js";
-// v0.4：导入预估器（三层漏斗 L3 的预估确认，纯计算不落库）
+// 导入预估器（纯计算不落库）
 import { createEstimateHandler } from "./lib/estimate.js";
-import { createPendingStore } from "./lib/pending.js";   // v0.5 保留（legacy 迁移读取旧 mneme 缓冲用）
+import { createPendingStore } from "./lib/pending.js";   // legacy：迁移期读取旧 mneme 缓冲用
 import { createBufferStore } from "./lib/buffer.js";
 import { startDshProbe } from "./lib/dsh-probe.js";
 
@@ -86,17 +86,13 @@ async function main() {  const startedAt = Date.now();
   }
 
   // ---- HTTP 服务 --------------------------------------------------------------
-  // v0.5：实时对话原料写 bridge 自有缓冲（不再进 mneme）
-  // v0.5：bridge 自有缓冲（架构裁决——待蒸馏原料绝不进 mneme）
-  const bufferStore = createBufferStore(process.env.MNEME_BRIDGE_DATA_DIR || join(B_ROOT, "data"));   // v0.5.1：支持 env 覆盖（smoke 隔离用），生产固定 bridge/data
+  // bridge 自有缓冲（待蒸馏原料绝不进 mneme）；MNEME_BRIDGE_DATA_DIR 供测试隔离覆盖，生产固定 bridge/data
+  const bufferStore = createBufferStore(process.env.MNEME_BRIDGE_DATA_DIR || join(B_ROOT, "data"));
   let pendingStore = null;   // legacy：迁移期读取旧 mneme 缓冲（迁移脚本跑完后可删）
   const conversation = createConversationHandler(
     { capacity: config.conversation?.capacity ?? 500 },
     (memory) => {
-      // v0.5.22：导入链路的会话 id / 摘要卡形态此前从未被读取——
-      // importer 把 sid 放进 memory.tags（imp-sess:<sid>）、kind 放进 tags（summary-card），
-      // 而这里只找 content 里的 "session: " 行（importer 不写该行）→ 导入原料永远 sessionId=null、
-      // 摘要卡被当普通对话。现在 tags 优先、content 行兜底。
+      // 会话 id / 摘要卡形态优先从 tags 读（imp-sess:<sid> / summary-card），content 行兜底。
       const tags = Array.isArray(memory.tags) ? memory.tags.filter((t) => typeof t === "string") : [];
       const tagSess = tags.find((t) => t.startsWith("imp-sess:"));
       const content = String(memory.content || "");
@@ -116,7 +112,7 @@ async function main() {  const startedAt = Date.now();
       }) ? { status: 201, json: { action: "buffered" } } : { status: 200, json: { deduped: true } };
     }
   );
-  // ---- v0.3 蒸馏器接线 --------------------------------------------------------
+  // ---- 蒸馏器接线 --------------------------------------------------------
   // pending 存取器只在 embedded 模式可用（remote 时 8790 无按 tags 查询能力，
   // 蒸馏是「bridge 本地缓冲」语义，embedded 才是它的主场；remote 下禁用并日志说明）。
   let distiller = null;
@@ -126,15 +122,15 @@ async function main() {  const startedAt = Date.now();
     distiller = createDistiller({
       config,
       backend,
-      // v0.5.11：蒸馏取静默会话的料（活跃会话等它冷却，保证整会话一次调用全局视角）
+      // 蒸馏取静默会话的料（活跃会话等它冷却，保证整会话一次调用全局视角）
       loadPending: () => bufferStore.listIdlePending((config.distill && config.distill.idleMs) || 600000, (config.distill && config.distill.batchLimit) || 60),
-      loadAllPending: () => bufferStore.listPending((config.distill && config.distill.batchLimit) || 60),   // v0.5.11：手动「立即蒸馏」用全量
+      loadAllPending: () => bufferStore.listPending((config.distill && config.distill.batchLimit) || 60),   // 手动「立即蒸馏」用全量
       markDistilled: (ids) => bufferStore.markDone(ids),
-      // v0.4 断点续跑：会话级跳过/登记（tags 的 imp-sess:<sid> 状态机）
+      // 断点续跑：会话级跳过/登记（tags 的 imp-sess:<sid> 状态机）
       isSessionDone: (sid) => bufferStore.isSessionDone(sid),
       markSessionDone: (sid) => bufferStore.markSessionDone(sid)
     });
-    // v0.5.11：自动蒸馏只看"静默会话"（默认 10 分钟无新轮次）——避免逐轮蒸馏碎片化+烧 token
+    // 自动蒸馏只看"静默会话"（默认 10 分钟无新轮次）——避免逐轮蒸馏碎片化+烧 token
     const idleMs = (config.distill && config.distill.idleMs) || 600000;
     probe = startDshProbe({
       config,
@@ -146,13 +142,13 @@ async function main() {  const startedAt = Date.now();
     slog.info("distiller-unavailable-remote-mode");
   }
 
-  // v0.6.2（task-12）：DSH 会话清理器（/maintenance/purge-headless-sessions 与蒸馏后自动清理共用）
+  // DSH 会话清理器（/maintenance/purge-headless-sessions 与蒸馏后自动清理共用）
   const sessionCleaner = createSessionCleaner({ sessionCleanup: config.sessionCleanup });
 
-  // v0.4：旧会话批量导入处理器（复用 backend.save 与蒸馏缓冲状态机）；
+  // 旧会话批量导入处理器（复用 backend.save 与蒸馏缓冲状态机）；
   // maxImportChars 字符闸从 config.import 读（默认 50000）
   const importMaxChars = config.import?.maxImportChars ?? 50000;
-  // v0.5：导入原料写 bridge 自有缓冲（不再进 mneme）
+  // 导入原料写 bridge 自有缓冲
   const importer = createImportHandler(
     { maxBatch: 200, maxImportChars: importMaxChars },
     (memory) => {
@@ -172,7 +168,7 @@ async function main() {  const startedAt = Date.now();
       }) ? { status: 201, json: { action: "buffered" } } : { status: 200, json: { deduped: true } };
     }
   );
-  // v0.4：预估器（POST /memory/import/estimate）——与 import 同口径，纯计算
+  // 预估器（POST /memory/import/estimate）——与 import 同口径，纯计算
   const estimator = createEstimateHandler({ maxImportChars: importMaxChars });
 
   const handler = createRequestHandler({
@@ -180,19 +176,19 @@ async function main() {  const startedAt = Date.now();
     backend,
     conversation,
     startedAt,
-    // v0.2：/memory/context 的默认条数来自 config.mneme（老配置缺省时
+    // /memory/context 的默认条数来自 config.mneme（老配置缺省时
     // loadOrCreateConfig 已补默认值，这里再兜一层防御）
-    bufferStore,   // v0.4.4：缓冲队列查看（/memory/pending）
+    bufferStore,   // 缓冲队列查看（/memory/pending）
     contextCfg: {
       pinsLimit: m.contextPinsLimit,
       relatedTopK: m.contextRelatedTopK
     },
-    // v0.3.1：蒸馏器引用（面板 POST /memory/distill 触发手动蒸馏）
+    // 蒸馏器引用（面板 POST /memory/distill 触发手动蒸馏）
     distiller,
     importer,
-    // v0.4：导入预估器（POST /memory/import/estimate）
+    // 导入预估器（POST /memory/import/estimate）
     estimator,
-    // v0.6.2：DSH 会话清理（POST /maintenance/purge-headless-sessions）
+    // DSH 会话清理（POST /maintenance/purge-headless-sessions）
     sessionCleaner
   });
 

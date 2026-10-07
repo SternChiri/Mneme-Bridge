@@ -1,7 +1,7 @@
-// lib/buffer.js —— bridge 自有的待蒸馏缓冲（v0.5 架构裁决）
-// 裁决：缓冲原料绝不进 mneme——mneme 只收「蒸馏完成的合格记忆」。
-// 旧设计把待蒸馏行写进 mneme memories 表（tags 做状态），导致 mneme UI/
-// 检索/注入全被管线原料污染。本模块用**独立 SQLite**（buffer.db）承载：
+// lib/buffer.js —— bridge 自有的待蒸馏缓冲
+// 缓冲原料绝不进 mneme——mneme 只收「蒸馏完成的合格记忆」：
+// 若把待蒸馏行写进 mneme memories 表（tags 做状态），mneme UI/检索/注入
+// 都会被管线原料污染。本模块用**独立 SQLite**（buffer.db）承载：
 //   扩展上报 → buffer.db（status=pending）→ distiller 按会话分组读走
 //   → DSH headless 蒸馏 → 合格记忆经 backend.save 入 mneme → 原料标 done。
 // 独立文件的好处：mneme 的 UI/搜索/注入/dream 整理彻底看不见原料；
@@ -35,18 +35,18 @@ export function createBufferStore(dataDir) {
     CREATE INDEX IF NOT EXISTS idx_buffer_status ON buffer(status);
     CREATE INDEX IF NOT EXISTS idx_buffer_session ON buffer(session_id);
   `);
-  // v0.5.11：src 列区分来源（import=旧会话导入 / live=实时对话）——
+  // src 列区分来源（import=旧会话导入 / live=实时对话）——
   // 蒸馏器的"会话级跳过"只应作用于 import 行（迟到批次）；live 会话恢复聊天后新轮次要正常蒸。
   try { db.exec("ALTER TABLE buffer ADD COLUMN src TEXT"); } catch (e) { if (!/duplicate column/i.test(String(e))) throw e; }
   try { db.exec("UPDATE buffer SET src='import' WHERE src IS NULL AND id LIKE 'mig-%'"); } catch (e) { /* 幂等 */ }
 
   const SHA_RE = /^[a-f0-9]{64}$/;
 
-  /** v0.5.18：行后处理——合成 tags（imp-sess:<sid> / summary-card / import / edge），
-   *  对齐旧 pendingStore 的行形状（distiller 的 sessTags 提取依赖 e.tags）。 */
+  /** 行后处理——合成 tags（imp-sess:<sid> / summary-card / import / edge），
+   *  对齐 pendingStore 的行形状（distiller 的 sessTags 提取依赖 e.tags）。 */
   const withTags = (rows) => rows.map((r) => ({
     ...r,
-    // v0.5.22：distiller 用 e.distill_kind 判摘要卡（不是看 tags）——这里补齐字段
+    // distiller 用 e.distill_kind 判摘要卡（不是看 tags）——这里补齐字段
     ...(r.kind === "summary-card" ? { distill_kind: "summary-card" } : {}),
     tags: [
       "web", "edge",
@@ -89,8 +89,8 @@ export function createBufferStore(dataDir) {
     /** 会话级断点续跑：该会话是否有任一条目已 done。 */
     isSessionDone(sessionId) {
       if (!sessionId) return false;
-      // v0.5.23：语义修正——「有 done 行」不等于会话蒸完（批量上限截断时会误判，
-      // 未蒸馏的剩余条目会被永久跳过）。现在要求：有 done 行且没有任何 pending 行。
+      // 「有 done 行」不等于会话蒸完（批量上限截断时会误判，未蒸馏的剩余
+      // 条目会被永久跳过）：要求有 done 行且没有任何 pending 行。
       const pend = db.prepare("SELECT 1 FROM buffer WHERE session_id = ? AND status = 'pending' LIMIT 1").get(sessionId);
       if (pend) return false;
       const r = db.prepare("SELECT 1 FROM buffer WHERE session_id = ? AND status = 'done' LIMIT 1").get(sessionId);
@@ -102,7 +102,7 @@ export function createBufferStore(dataDir) {
       db.prepare("UPDATE buffer SET status = 'done' WHERE session_id = ? AND status = 'pending'").run(sessionId);
     },
 
-    /** v0.5.11：静默会话的 pending 条目——活跃会话整组排除（避免逐轮蒸馏碎片化+烧 token）。 */
+    /** 静默会话的 pending 条目——活跃会话整组排除（避免逐轮蒸馏碎片化+烧 token）。 */
     listIdlePending(idleMs, limit = 60) {
       const cutoff = new Date(Date.now() - (Number(idleMs) > 0 ? idleMs : 600000)).toISOString();
       return withTags(db.prepare(
@@ -122,14 +122,14 @@ export function createBufferStore(dataDir) {
       ).all(limit));
     },
 
-    /** v0.5.13：删除待蒸馏条目（用户在面板队列里点 X——蒸馏前的人工把关）。 */
+    /** 删除待蒸馏条目（面板队列里的人工把关）。 */
     remove(id) {
       const r = db.prepare("DELETE FROM buffer WHERE id = ? AND status = 'pending'").run(id);
       return r.changes > 0;
     },
 
-    /** v0.5.17：已入库会话 id 集——该会话存在 done 行且无 pending 行（全蒸完）。
-     *  返回 Set；面板导入列表用它隐藏已入库会话（用户要明确"哪些已入库/哪些没有"）。 */
+    /** 已入库会话 id 集——该会话存在 done 行且无 pending 行（全蒸完）。
+     *  返回 Set；面板导入列表用它隐藏已入库会话。 */
     importedSessionIds() {
       const rows = db.prepare(
         `SELECT session_id,

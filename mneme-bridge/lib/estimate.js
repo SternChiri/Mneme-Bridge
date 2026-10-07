@@ -1,4 +1,4 @@
-// lib/estimate.js —— 导入预估器（v0.4 三层漏斗 L3 的「预估确认」）
+// lib/estimate.js —— 导入预估器
 // 纯计算不落库：给扩展 L3 确认弹层报「本次导入 ≈ 多少字符 / 多少 token / 多少会话」。
 // 口径与落库严格一致：estimateChars = 合成 content 的实际字符量（user/assistant
 // 各截 8000 后的落库尺寸）——它同时是蒸馏输入的上界；扩展传摘要卡形态的
@@ -66,7 +66,7 @@ export function createEstimateHandler(opts) {
       const err = new Error("items array required"); err.status = 400; throw err;
     }
     const items = body.items;
-    // v0.4.1：full 模式采样估算——扩展只送 ≤50 条样本 + 真实总字符（全量 items 太大，
+    // full 模式采样估算——扩展只送 ≤50 条样本 + 真实总字符（全量 items 太大，
     // sendMessage 传大 JSON 会卡死）。totalChars 直通优先，样本仅用于 sessions 去重。
     const sampled = Number.isFinite(body.totalChars) && body.totalChars > 0;
     let estimateChars = 0;
@@ -75,7 +75,7 @@ export function createEstimateHandler(opts) {
     for (const it of items) {
       // 字符口径 = 落库 content 实际长度（含「用户:/助手:/url:」框架字符）
       estimateChars += importContentOf(it).length;
-      // 会话数：有 sid 的按 sid 去重；无标记的每条独立计（旧扩展一轮 ≈ 一会话）
+      // 会话数：有 sid 的按 sid 去重；无标记的每条独立计
       const sid = sessionKeyOf(it);
       sessionSet.add(sid ?? "no-sid-" + (noSidIndex++));
     }

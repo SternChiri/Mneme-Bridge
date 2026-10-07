@@ -2,11 +2,10 @@
 // 状态机：扩展上报的对话 → memories 表（type=history, tags 含 pending-distill）→
 // 蒸馏器读走 → 正式条目入库 → 原始行 tags 追加 distilled。
 // 用 tags 做状态而非另建表：mneme 的 mirror/查询都以 memories 表为准，单表最少惊喜。
-// v0.4（task-9）：①load 同时收实时（edge-extension）与导入（edge-import）两条
-// 来源——importer 一直打 edge-import 标记但 v0.3 的 load 只查 edge-extension，
-// 导入会话进不了蒸馏管线（现存断层，本版修复）；②会话键解析优先 tags 里的
-// imp-sess: 标记（importer v0.4 写入），无标记回落 content 的 session:/url: 行；
-// ③会话级断点续跑 API（isSessionDone/markSessionDone，蒸馏器调用）。
+// load 同时收实时（edge-extension）与导入（edge-import）两条来源；
+// 会话键解析优先 tags 里的 imp-sess: 标记（importer 写入），无标记回落
+// content 的 session:/url: 行；另提供会话级断点续跑 API
+// （isSessionDone/markSessionDone，蒸馏器调用）。
 import { loggerFor } from "./log.js";
 
 const log = loggerFor("pending");
@@ -36,7 +35,7 @@ export function createPendingStore(store) {
         let tags = [];
         try { tags = JSON.parse(r.tags || "[]"); } catch (e) { /* 坏行当空 */ }
         const m = r.content.match(/^用户: ([\s\S]*?)\n助手: ([\s\S]*?)(?:\nurl: .*)?$/);
-        // 会话键优先级：tags 的 imp-sess:（importer v0.4 显式写入，权威）>
+        // 会话键优先级：tags 的 imp-sess:（importer 显式写入，权威）>
         // content 的 session: 行（实时对话 provenance）> content 的 url 尾段 >
         // null（无标记，蒸馏器按条目独立处理）
         const tagSess = tags.find((t) => typeof t === "string" && t.startsWith("imp-sess:"));
@@ -72,7 +71,7 @@ export function createPendingStore(store) {
       log.info("pending-marked", { count: ids.length });
     },
     /**
-     * 会话级断点续跑（task-9 第 2 点）：该会话是否已有任一条目被蒸馏过。
+     * 会话级断点续跑：该会话是否已有任一条目被蒸馏过。
      * 为什么查任一条目而非全部：导入按会话分批上报，同会话第二批到达时
      * 第一批已标 distilled——「任一完成」即视全会话完成，跳过可避免同会话
      * 重复蒸馏（重复的记忆条目要靠 mneme 去重兜底，不如源头不写）。

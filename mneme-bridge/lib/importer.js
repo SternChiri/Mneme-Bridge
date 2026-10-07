@@ -1,11 +1,11 @@
-// lib/importer.js —— 旧会话批量导入（v0.4，改进 3 的 bridge 侧 + task-9 字符闸）
+// lib/importer.js —— 旧会话批量导入
 // 数据流：扩展借页面 cookie 拉历史 → POST /memory/import（批量对话）→
 // 走与实时对话同一套缓冲（pending-distill 状态）→ DSH 启动时自动蒸馏入库。
 // 与实时链路的唯一区别：批量、带导入标记、去重键独立（防导入与实时重复）。
-// v0.4（task-9）：①maxImportChars 闸（超限 400 too-large，预估确认的第二道锁）；
+// ①maxImportChars 闸（超限 400 too-large，预估确认的第二道锁）；
 // ②sessionId 进 tags（imp-sess:<sid>）——断点续跑按会话跳过的依据；
 // ③kind:"summary-card" 进 tags——蒸馏器识别摘要卡形态换提示词；④content 合成
-// 改用 estimate.importContentOf（与 /memory/import/estimate 口径字节一致）。
+// 用 estimate.importContentOf（与 /memory/import/estimate 口径字节一致）。
 import { createHash } from "node:crypto";
 import { loggerFor } from "./log.js";
 import { importContentOf, sessionKeyOf } from "./estimate.js";
@@ -41,7 +41,7 @@ class LruSet {
  * 创建导入处理器。
  * saveFn 与 conversation 共用 backend.save；
  * seen 由调用方提供（复用去重 LRU）；
- * maxImportChars 来自 config.import.maxImportChars（默认 50000，任务硬性值）。
+ * maxImportChars 来自 config.import.maxImportChars（默认 50000）。
  */
 export function createImportHandler(opts, saveFn) {
   const lru = opts.lru || new LruSet(opts.lruCapacity || 1000);
@@ -77,14 +77,14 @@ export function createImportHandler(opts, saveFn) {
     for (const it of items) {
       const user = typeof it.user === "string" ? it.user.trim() : "";
       const assistant = typeof it.assistant === "string" ? it.assistant.trim() : "";
-      // v0.5.22：摘要卡（kind=summary-card）正文全在 user 里、assistant 恒空——
-      // 此前与全文同样要求 assistant 非空，导致卡模式导入的所有条目被静默拒收。
+      // 摘要卡（kind=summary-card）正文全在 user 里、assistant 恒空——
+      // 不能与全文同样要求 assistant 非空。
       const isCardItem = it.kind === "summary-card";
       if (!user || (!assistant && !isCardItem)) { rejected++; continue; }
       // 导入去重键：sha256(user+assistant) 前缀加导入域，与实时对话互不干扰
       const hash = "imp-" + createHash("sha256").update(user + "\n" + assistant).digest("hex");
       if (lru && lru.has(hash)) { deduped++; continue; }
-      // v0.3.38：occurred_at 归一——ISO 串直传；数字（秒/毫秒）转 ISO（对齐 mneme normalizeOccurredAt 语义）
+      // occurred_at 归一——ISO 串直传；数字（秒/毫秒）转 ISO（对齐 mneme normalizeOccurredAt 语义）
       const occurred = (() => {
         const v = it.occurred_at;
         if (typeof v === "string" && v.trim()) {
@@ -97,11 +97,11 @@ export function createImportHandler(opts, saveFn) {
         }
         return null;
       })();
-      // v0.4 断点续跑：会话标记进 tags（蒸馏器按它跳过已蒸馏会话）；扩展没带
+      // 断点续跑：会话标记进 tags（蒸馏器按它跳过已蒸馏会话）；扩展没带
       // sessionId 时从 url 指纹推导，都取不到就 null（无标记 = 每条独立会话，
-      // 蒸馏器退回条目级处理，行为与 v0.3 一致）。
+      // 蒸馏器退回条目级处理）。
       const sid = sessionKeyOf(it);
-      // 摘要卡形态（task-9 第 4 点）：L2 产物带 kind 标记，蒸馏器据此换提示词
+      // 摘要卡形态：扩展产物带 kind 标记，蒸馏器据此换提示词
       const isCard = it.kind === "summary-card";
       const title = "旧会话:" + user.slice(0, 40);
       const content = importContentOf(it);

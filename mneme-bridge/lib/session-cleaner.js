@@ -1,9 +1,9 @@
-// lib/session-cleaner.js —— DSH headless 蒸馏会话清理器（v0.6.2，task-12）
+// lib/session-cleaner.js —— DSH headless 蒸馏会话清理器
 // 解决的问题：runHeadless() 每次调 dsh --profile headless 蒸馏，DSH 都会把这次
 // 单轮任务落成一个持久会话（头帧 cwd = bridge 根目录），在 DSH 工作区列表积成
 // 几百个「未分组」残留。
 //
-// 调查结论（2026-10-05，本机 DSH 0.2.0-rc.2 源码核对）：
+// 依据 DSH 源码核对（0.2.0-rc.2）：
 //   ① dsh 启动器（@deepseek-ai/dsh lib/bin.js）自有旗标只有 --profile/--patch/
 //      --dump-config，无任何会话管理命令；
 //   ② headless runner（@deepseek-ai/dsh-headless lib/index.js）Config 仅
@@ -20,7 +20,7 @@
 // 因此桥接器侧的清理 = 精确识别「本项目蒸馏产生的会话」后移除其目录。
 // 识别硬闸（四重，全部命中才算候选，任何一闸不过即跳过——绝不误删）：
 //   A. 头帧 cwd 与 bridge 根目录精确相等（分隔符/大小写归一后比较）
-//   B. 目录名 === 头帧 id，且 id 形如 session-<uuid>（旧版裸 uuid 目录不动）
+//   B. 目录名 === 头帧 id，且 id 形如 session-<uuid>（形状不符的目录不动）
 //   C. 头帧无 parentSession / origin / agentPreset（subagent/fork/带预设的
 //      会话绝不碰——它们可能属于正在运行的 agent）
 //   D. 目录内容只有一个 session.vN.jsonl.zstd 文件（蒸馏会话的标准形态）
@@ -110,7 +110,7 @@ export async function listDistillSessions(opts = {}) {
     for (const d of dirs) {
       const dir = join(sessionsRoot, ws.name, d.name);
       try {
-        // 闸 B（前半）：目录名必须是 session-<uuid> 形状（旧版裸 uuid/杂名目录直接排除）
+        // 闸 B（前半）：目录名必须是 session-<uuid> 形状（裸 uuid/杂名目录直接排除）
         if (!UUID_RE.test(d.name)) continue;
         const files = (await readdir(dir, { withFileTypes: true })).filter((e) => e.isFile()).map((e) => e.name);
         // 闸 D：目录内容只有一个 session.vN.jsonl.zstd

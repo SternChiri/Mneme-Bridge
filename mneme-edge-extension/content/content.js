@@ -1,4 +1,4 @@
-// 隔离世界 content script（v0.2）：
+// 隔离世界 content script：
 // 1) 配置同步 + debug 下发；2) 输入预取 context 经 CustomEvent 推给 inject.js；
 // 3) visible 模式才做输入框可见注入（implicit 模式由 inject.js 请求级完成）；
 // 4) DOM 兜底收集 + conversation 上报（带重试）。
@@ -57,7 +57,7 @@
   function pushCmd(detail) {
     window.dispatchEvent(new CustomEvent('mneme-ext:cmd', { detail }));
   }
-  // ---- v0.6.1：'bg' 转发一次性握手 nonce（上游 Discussion #363 安全建议）----
+  // ---- 'bg' 转发一次性握手 nonce（防页面侧伪造命令）----
   // 页面任意脚本可伪造 mneme-ext:cmd type:'bg' 经本脚本代发 bridge 命令读记忆库。
   // 本脚本（isolated world）每次页面加载生成随机 nonce 并广播一次给 inject.js，
   // 此后只转发携带正确 nonce 的 bg 命令。局限：提高门槛非强隔离（README「安全说明」）。
@@ -89,7 +89,7 @@
   const INJ_FOOTER = '[/记忆参考]';
   function onConversation(d) {
     let user = d.user || '';
-    // v0.5.14 兜底：剥离注入块（inject 侧已剥，这里防漏——含历史遗留的队列脏数据防御）
+    // 兜底：剥离注入块（inject 侧已剥，这里防漏——含历史遗留的队列脏数据防御）
     const __h = user.indexOf(INJ_HEADER);
     if (__h >= 0) {
       const __f = user.indexOf(INJ_FOOTER, __h);
@@ -101,7 +101,7 @@
     if (!user && lastTyped && (Date.now() - lastTyped.at) < 60000) { user = lastTyped.text; conf = (conf ? conf + '+' : '') + 'typed'; }
     if (!user && lastUserFromDom) { user = lastUserFromDom; conf = conf + '+dom-user'; }
     if (!user || !assistant) { dbg('会话片段不全，跳过', { userLen: user.length, assistantLen: assistant.length }); return; }
-    // v0.2.7 DOM 终审：thinking 回退的内容是思考散文混合体，等 800ms 取渲染后的
+    // DOM 终审：thinking 回退的内容是思考散文混合体，等 800ms 取渲染后的
     // 最后一个答案块（页面已渲染的正文）覆盖——在展示层根治协议噪声。
     if (conf.indexOf('thinking-fallback') >= 0) {
       setTimeout(() => {
@@ -154,7 +154,7 @@
       if (desc && desc.set) desc.set.call(el, v); else el.value = v;
       el.dispatchEvent(new Event('input', { bubbles: true }));
     } else {
-      // v0.5.36 回退：恢复 0.5.31 及之前的 innerText 直赋（用户确认此前显示正常）
+      // visible 模式用 innerText 直赋（execCommand 插入在该输入框不可靠）
       el.innerText = v;
       el.dispatchEvent(new InputEvent('input', { bubbles: true }));
     }
@@ -184,7 +184,7 @@
     prefetchTimer = setTimeout(() => prefetchNow(t), 400);
   }, true);
 
-  // v0.5.26：发送前即时预取——用户按 Enter 或点发送按钮的瞬间，用输入框**最终全文**
+  // 发送前即时预取——按 Enter 或点发送按钮的瞬间，用输入框**最终全文**
   // 立即拉 context（不等 400ms debounce），让「打完字马上回车」的场景也能带着
   // 与第一句话匹配的 related 注入。预取异步进行，赶不上本轮就降级 globalOnly（不阻塞发送）。
   window.addEventListener('mneme-ext:cmd', (e) => {
@@ -214,7 +214,7 @@
     if (!ctx) return '';
     const lines = [];
     const rel = (ctx.related || []).slice(0, 5).map((m) => '- ' + (m.title || '') + '：' + String(m.content || '').replace(/\s+/g, ' ').trim().slice(0, 120));
-    // v0.5.39：skipGlobal=true（会话第 2+ 轮）只注 related——画像/偏好已在历史里
+    // skipGlobal=true（会话第 2+ 轮）只注 related——画像/偏好已在历史里
     if (!skipGlobal) {
       if (ctx.profile) lines.push('- 用户画像：' + ctx.profile.slice(0, 150));
       for (const r of (ctx.pins || []).slice(0, 3)) lines.push('- ' + (r.title || '') + '：' + String(r.content || '').slice(0, 120));
@@ -229,11 +229,11 @@
     return (location.pathname.match(/\/a\/([A-Za-z0-9_-]{8,})/) || [])[1] || location.pathname + location.search;
   }
   function visibleIntercept(text, input, btn) {
-    // v0.5.34：visible 每轮发送都把块写进输入框 → DS 每轮 prompt 都带画像（用户实测）。
+    // visible 每轮发送都把块写进输入框 → DS 每轮 prompt 都带画像。
     // 门控：同一 URL 会话只写一次；切换会话（sid 变化）自动重置。0.5.33 的 sessionStorage
     // 有跨会话遗留问题（同 tab 换会话 800ms 轮询未清就被拦），改为内存 + sid 关联。
     const sid = currentUrlSid();
-    // v0.5.39（用户澄清）：每一轮都注入 related（本轮问话的相关记忆）；
+    // 每一轮都注入 related（本轮问话的相关记忆）；
     // 区别只在——首轮带「画像+偏好」全局段，后续轮只带 related（全局段已在历史里）。
     var skipGlobal = visibleDoneSid === sid;   // 同会话第 2+ 轮
     prefetchNow(text);
@@ -246,9 +246,9 @@
       turnInjected = true;
       if (!skipGlobal) visibleDoneSid = sid;   // v0.5.39：仅首轮登记（后续轮 skipGlobal）
       dbg('visible 注入完成（本会话首次，sid=' + visibleDoneSid.slice(0, 12) + '）');
-      // v0.5.38：从首页发出第一句后 URL 会从 / 变成 /a/chat/s/<id>——同一场对话的延续。
+      // 从首页发出第一句后 URL 会从 / 变成 /a/chat/s/<id>——同一场对话的延续。
       // 监听一次性迁移：URL 出现会话 id 且当前门控还是旧值时，把门控同步到新 sid，
-      // 否则第 2 轮会被判成新会话再注一次（用户实测踩坑）。
+      // 否则第 2 轮会被判成新会话再注一次。
       const oldSid = visibleDoneSid;
       const migrate = setInterval(() => {
         const cur = currentUrlSid();
@@ -307,7 +307,7 @@
     }
   }
 
-  // v0.2.9a：把面板需要的工具暴露给第二个 IIFE（mountPanel）——
+  // 把面板需要的工具暴露给第二个 IIFE（mountPanel）——
   // 两个 IIFE 是独立作用域，cfgCache/retrySend 原本面板拿不到（实测 ReferenceError）。
   window.__MNEME_CS_SHARED__ = {
     cfgCache: cfgCache,
@@ -318,14 +318,14 @@
 })();
 
 // ====================================================================
-// v0.3.0 面板（task-5）：唯一入口 = DS 左侧栏底部「记忆设置」菜单项
-// （与「系统设置/帮助与反馈」并列）。v0.3.0 按用户指示删除悬浮球，无双模式。
+// 面板：唯一入口 = DS 左侧栏底部「记忆设置」菜单项
+// （与「系统设置/帮助与反馈」并列）。无双模式。
 // 点击侧栏项 → 居中弹层，模拟「系统设置」风格（遮罩+圆角卡片分组+iOS 开关）。
 // 侧栏锚点：文本命中「系统设置/帮助与反馈」→ 向上爬 28~56px 的「行」级祖先
 // （不猜 class，改版韧性高）；SPA 路由重建由 MutationObserver 防抖自动重挂。
 // 网络一律 retrySend 经 background；Shadow DOM(closed) 隔离；挂载失败静默，
 // 绝不影响注入/收集主链路。
-// 作用域纪律（v0.2.9b 教训）：本 IIFE 整体 strict（文件级 'use strict'），
+// 作用域纪律：本 IIFE 整体 strict（文件级 'use strict'），
 // try 块内声明的函数（plog/esc/renderList…）块外不可见——try 块外的唯一
 // 日志用 cfgCache 守卫的 console.log（cfgCache 是 var，函数级提升可见）。
 // 验证方法（人工）：
@@ -360,9 +360,9 @@
     var style = document.createElement('style');
     style.textContent = [
       ':host { all: initial; }',
-      // v0.3.10（task-7 复刻）：字体栈/尺寸对齐 DS 设计系统（quote-cjk-patch/Inter 14px/22px，probe 实测）
+      // 字体栈/尺寸对齐 DS 设计系统（quote-cjk-patch/Inter 14px/22px）
       '* { box-sizing: border-box; font: var(--mn-font, 14px/22px -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif); }',
-      // v0.3.4（task-7）：视觉 token 集中管理——默认值=当前实现；
+      // 视觉 token 集中管理——默认值=当前实现；
   
       '.dialog { --dhead: var(--mn-dialog-bg, #fff); position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);',
         'width: var(--mn-dialog-w, 760px); max-width: calc(100vw - 48px); max-height: var(--mn-dialog-maxh, 560px); height: var(--mn-dialog-h, 560px); overflow: hidden;', // v0.3.20：双栏布局下弹层不滚（滚动交给右侧 mpane），消除双滚动条
@@ -371,7 +371,7 @@
       '.dialog .sec { padding: 0 20px 4px; }', // v0.3.17：去掉整块灰底（DS 是白底+浅灰卡片），此层仅作布局容器
       '.dialog .sec-title { font-size: 13px; font-weight: 500; color: var(--mn-dialog-color, #1f2329); opacity: .55; padding: 18px 0 8px; }', // v0.3.17：与卡片同左边距（此前 22px 使标题比行文字更右）
       '.dialog .card { background: var(--mn-card-bg, rgba(0,0,0,.035)); border: none; border-radius: 12px; padding: 0 16px; overflow: hidden; }',
-      // v0.3.19：DS 系统设置式双栏布局（左 nav 176px + 右内容滚动）
+      // DS 系统设置式双栏布局（左 nav 176px + 右内容滚动）
       '.mwrap { display: flex; min-height: 300px; max-height: 62vh; }',
       '.mnav { width: 168px; flex-shrink: 0; padding: 6px 10px 12px; display: flex; flex-direction: column; gap: 2px; }',
       '.mnav-item { display: flex; align-items: center; gap: 9px; padding: 9px 12px; border: none; background: transparent; color: inherit; font-size: 14px; text-align: left; border-radius: 10px; cursor: pointer; transition: background .15s; width: 100%; }',
@@ -410,7 +410,7 @@
       '.modal::-webkit-scrollbar-track { background: transparent; }',
       '.modal::-webkit-scrollbar-thumb { background: rgba(128,128,128,.35); border-radius: 3px; background-clip: padding-box; }',
       '.modal { scrollbar-width: thin; scrollbar-color: rgba(128,128,128,.35) transparent; overflow: hidden; }', // v0.3.17：弹层本体不滚（子列表滚），圆角完整
-      // v0.3.19：导入弹层——弹层本体不滚，仅列表滚；列表 flex 撑满剩余高度
+      // 导入弹层——弹层本体不滚，仅列表滚；列表 flex 撑满剩余高度
       '.modal { display: flex; flex-direction: column; max-height: 78vh; }',
       '.modal .mbody { display: flex; flex-direction: column; min-height: 0; flex: 1; }',
       '.im-list { flex: 1; min-height: 180px; max-height: 52vh; overflow-y: auto; border-radius: 12px; background: var(--mn-card-bg, rgba(0,0,0,.035)); padding: 0 14px; }',
@@ -432,7 +432,7 @@
       '.dialog::-webkit-scrollbar-track { background: transparent; }',
       '.dialog::-webkit-scrollbar-thumb { background: rgba(128,128,128,.35); border-radius: 3px; background-clip: padding-box; }',
       '.dialog { scrollbar-width: thin; scrollbar-color: rgba(128,128,128,.35) transparent; }',
-      // v0.3.11：滚动条贴圆角会盖住右侧弧线——给 dialog 补圆角裁剪上下文
+      // 滚动条贴圆角会盖住右侧弧线——给 dialog 补圆角裁剪上下文
       '.dialog { will-change: scroll-position; }',
       '.dialog > * { border-radius: inherit; }',
       '.dialog .head { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: 18px 24px 14px;',
@@ -450,7 +450,7 @@
       '.status { display: flex; align-items: center; gap: 8px; padding: var(--mn-status-pad, 12px 16px); border-radius: var(--mn-status-radius, 12px);',
         'background: var(--mn-status-bg, rgba(0,0,0,.05)); word-break: break-all; }',
       '.dot { width: 8px; height: 8px; border-radius: 50%; background: #b0b0b0; flex-shrink: 0; }',
-      // v0.3.10：DS 组件量级（xs 13/20；head 15/22）——probe 实测
+      // DS 组件量级（xs 13/20；head 15/22）
       '.dialog .head b { font-size: var(--mn-head-fs, 15px); font-weight: var(--mn-head-fw, 600); line-height: var(--mn-head-lh, 22px); }',
       '.linklike { font-size: var(--mn-linklike-fs, 13px); }',
       // 开关：DS 复刻参数位（轨道/滑块/配色/过渡）
@@ -605,7 +605,7 @@
     root.appendChild(toast);
 
     // ---- 弹层开关 ----
-    // v0.3.9a：桥必须在 mountPanel 挂载阶段就设置（此前误放 openPanel 体内——首次点击时
+    // 桥必须在 mountPanel 挂载阶段就设置（放在 openPanel 体内——首次点击时
     // 桥尚不存在，if 守卫静默跳过 → 永远打不开）。函数声明提升保证此处引用 openPanel 合法。
     window.__MNEME_OPEN_PANEL__ = openPanel;
     var panelOpen = false;
@@ -631,7 +631,7 @@
     }, true);
 
 
-    // ================= v0.3.1 旧会话导入（task-6） =================
+    // ================= 旧会话导入 =================
     // 编排在 content；DeepSeek 历史拉取在 injected（MAIN world 页面态 fetch，
     // host_permissions 不含 chat.deepseek.com——任务书唯一豁免）；bridge 写入在
     // background（importBatch）。三方经 CustomEvent（detail 只放数据字段）串接。
@@ -641,8 +641,8 @@
     function fmtInt(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
 
     function imOpen(title) {
-      // v0.3.27：imWrap 是单例共享变量——重复调用 imOpen 会覆盖引用，导致旧弹层变成
-      // 无法关闭的孤儿（用户实测：预览弹层的 X/遮罩全失效，只能刷新页面）。先清旧的。
+      // imWrap 是单例共享变量——重复调用 imOpen 会覆盖引用，导致旧弹层变成
+      // 无法关闭的孤儿（X/遮罩全失效，无法再关）。先清旧的。
       if (imWrap) { try { imWrap.remove(); } catch (e) {} imWrap = null; }
       imWrap = document.createElement('div');
       imWrap.innerHTML =
@@ -651,12 +651,12 @@
         '  <div class="mhead"><b>' + title + '</b><button class="mclose" title="关闭">✕</button></div>' +
         '  <div class="msec mbody"></div>' +
         '</div>';
-      // v0.3.27：用 self 捕获本次创建的弹层节点——避免稍后 imOpen 覆盖 imWrap 后，
+      // 用 self 捕获本次创建的弹层节点——避免稍后 imOpen 覆盖 imWrap 后，
       // 旧弹层的按钮错关到新弹层（或关不掉）。
       var self = imWrap;
       self.querySelector('.mclose').addEventListener('click', function () { importBusy = false; self.remove(); if (imWrap === self) imWrap = null; });
       self.querySelector('.scrim').addEventListener('click', function () { importBusy = false; self.remove(); if (imWrap === self) imWrap = null; });
-      // v0.3.18：原 capture+stopPropagation 会掐断 .mbody 内部所有按钮的 click（取消无响应根因）。
+      // capture+stopPropagation 会掐断 .mbody 内部所有按钮的 click（取消无响应根因）。
             // 改为仅拦截「冒泡到 mbody 自身」的点击（防透传到 scrim 关闭），内部按钮事件正常抵达。
             self.querySelector('.mbody').addEventListener('click', function (e) { if (e.target === this) e.stopPropagation(); }, false);
       root.appendChild(imWrap);
@@ -665,14 +665,14 @@
     function imClose() {
       if (imWrap) { imWrap.remove(); imWrap = null; }
     }
-    // v0.3.16：统一强制关闭入口——复位 importBusy（防"卡死"）+ 断开事件表 + 关弹层
+    // 统一强制关闭入口——复位 importBusy（防"卡死"）+ 断开事件表 + 关弹层
     function closePanelImport() {
       importBusy = false;
       try { imHandlers.progress = null; imHandlers.done = null; imHandlers.summariesReady = null; } catch (e) {}
       try { imClose(); } catch (e) {}
     }
 
-    // ================= v0.3.14 三层漏斗（task-8）=================
+    // ================= 导入三层漏斗 =================
     // L1 勾选列表（本函数）→ L2 摘要卡（imStart）→ L3 预算确认（imConfirm）
     // 全选/反选/关键词过滤；默认全不勾；白名单上限 = maxImportSessions
     var funnelPreview = [];   // v0.4.2：预览样本（batches 留在 injected，不跨 world 传）
@@ -680,7 +680,7 @@
     var funnelCards = 0;
 
 
-    // v0.4.4：缓冲队列查看器（待蒸馏条目 + 右下角「立即蒸馏」）
+    // 缓冲队列查看器（待蒸馏条目 + 右下角「立即蒸馏」）
         function openImportFlow() {
       if (importBusy) { plog('导入进行中，忽略重复点击'); return; }
       importBusy = true;
@@ -710,7 +710,7 @@
         '  <button class="btn im-cancel">取消</button>' +
         '</div>';
       mb.querySelector('.im-cancel').addEventListener('click', closePanelImport); // v0.3.16：统一强制关闭
-      // v0.3.20：从 DeepSeek 官方导出 JSON 导入（在本地完成解析；覆盖接口拿不到的更早会话）
+      // 从 DeepSeek 官方导出 JSON 导入（在本地完成解析；覆盖接口拿不到的更早会话）
       (function bindFileImport() {
         var fileBtn = mb.querySelector('.im-file');
         var fileInput = mb.querySelector('.im-fileinput');
@@ -729,7 +729,7 @@
             if (!list.length) { showToast('文件里没解析出会话'); return; }
             sessions = list;
             if (listEl) listEl.innerHTML = '';
-            // v0.3.21：更新顶部状态行（此前仍显示"正在拉取…100 个"，与实际 424 个不符）
+            // 更新顶部状态行（与实际解析数保持一致）
             var stEl = mb.querySelector('.im-status');
             if (stEl) stEl.innerHTML = '已从导出文件载入 <span class="im-lc">' + mnFmt(list.length) + '</span> 个会话';
             var barWrap = mb.querySelector('.bar');
@@ -752,10 +752,10 @@
       })();
       // 从 DS 导出 JSON 提取会话（结构容错：数组 / {data:[...]} / {chat_sessions:[...]}，字段名多形态）
       function extractSessionsFromExport(root) {
-        // v0.3.24：按 DS 真实导出结构解析（DS 官方「导出对话」JSON 格式）：
+        // 按 DS 真实导出结构解析（DS 官方「导出对话」JSON 格式）：
         //   [ { id, title, inserted_at(ISO), updated_at(ISO), mapping: { nodeId: { id, parent, children, message: { model, inserted_at, fragments:[{type,content}] } } } } ]
         //   fragments.type ∈ REQUEST(用户) / THINK(思维链，必须丢弃) / RESPONSE(助手)
-        // 此前只找 messages/chat_messages 数组 → 完全解析不出（列表空、排序塌缩）。
+        // 只认 messages/chat_messages 顶层数组，其余结构解析不出（列表空、排序塌缩）。
         var sessions = null;
         if (Array.isArray(root)) sessions = root;
         else if (root && Array.isArray(root.conversations)) sessions = root.conversations;
@@ -800,7 +800,7 @@
               if (resText) msgs.push({ role: 'assistant', content: resText, inserted_at: m.inserted_at });
             }
           }
-          // v0.3.28：不持有全量消息（424 会话全量可能数百 MB，跨 world 事件传递会爆），
+          // 不持有全量消息（大会话全量可能数百 MB，跨 world 事件传递会爆），
           // 只保留摘要卡真正需要的内容：首条用户、末条用户、首条助手（各截断 400 字）。
           var userMsgs = [], asstMsgs = [];
           for (var mi = 0; mi < msgs.length; mi++) {
@@ -888,11 +888,11 @@
       }
       function renderList() {
         var kw = String(mb.querySelector('.im-kw').value || '').trim().toLowerCase();
-        // v0.3.18（增强①）：多方式排序（修改时间 / 轮次 / 标题）
+        // 多方式排序（修改时间 / 轮次 / 标题）
         var sortKey = (mb.querySelector('.im-sort') || {}).value || 'time';
         var ordered = sessions.slice();
-        // v0.3.21：排序键归一——时间戳统一转毫秒（秒/毫秒/ISO 串），轮次缺失回退；
-        // 此前 ts/rounds 常为空导致两种排序都退化为原序（用户反馈"两种排序顺序完全一样"）。
+        // 排序键归一——时间戳统一转毫秒（秒/毫秒/ISO 串），轮次缺失回退；
+        // ts/rounds 为空时两种排序都会退化为原序，必须保证键有效。
         function tsMs(v) {
           if (v == null || v === '') return 0;
           if (typeof v === 'string') { var d = new Date(v); return isNaN(d.getTime()) ? 0 : d.getTime(); }
@@ -903,8 +903,8 @@
           if (n > 1e6) return n * 1000;
           return 0;
         }
-        // v0.3.23：次键改用标题（与主键正交）——此前「按轮次」在没有轮次数据时回退到时间，
-        // 与「按时间」结果完全相同，用户无法区分两种排序。
+        // 次键改用标题（与主键正交）——「按轮次」缺轮次数据时若回退到时间，
+        // 与「按时间」结果完全相同，两种排序无法区分。
         if (sortKey === 'rounds') {
           ordered.sort(function (a, b) {
             var d = (Number(b.rounds || b.msgCount || 0)) - (Number(a.rounds || a.msgCount || 0));
@@ -924,9 +924,9 @@
         for (var i = 0; i < ordered.length; i++) {
           var s0 = ordered[i];
           if (kw && String(s0.title || '').toLowerCase().indexOf(kw) < 0) continue;
-          if (importedIds[String(s0.id)]) continue;   // v0.5.17：已入库会话隐藏（明确"哪些已入库/哪些没有"）
-          // v0.3.25：ts 支持 ISO 字符串与秒/毫秒数值三形态（文件导入的 updated_at 是 ISO 串，
-          // 此前 Number(ISO) = NaN → 全部显示"(无日期)"）
+          if (importedIds[String(s0.id)]) continue;   // 已入库会话隐藏（明确"哪些已入库/哪些没有"）
+          // ts 支持 ISO 字符串与秒/毫秒数值三形态（文件导入的 updated_at 是 ISO 串，
+          // Number(ISO) = NaN → 全部显示"(无日期)"）
           var t = null;
           if (s0.ts != null && s0.ts !== '') {
             if (typeof s0.ts === 'string') { var td = new Date(s0.ts); t = isNaN(td.getTime()) ? null : td; }
@@ -955,7 +955,7 @@
         listEl.querySelectorAll('input[type="checkbox"]').forEach(function (cb) { cb.checked = !cb.checked; });
         syncSel();
       });
-      // v0.3.33：双按钮——生成摘要卡/ 全量导入（全文蒸馏，重要会话用）
+      // 双按钮——生成摘要卡/ 全量导入（全文蒸馏，重要会话用）
       function guardAndStart(mode) {
         var ids = checkedIds();
         chrome.storage.local.get({ maxImportSessions: 20 }, function (c) {
@@ -996,12 +996,12 @@
       };
     }
 
-      // 「导入旧会话」绑定（v0.3.5：openPanel 内、与 openImportFlow 同闭包层）
+      // 「导入旧会话」绑定（openPanel 内、与 openImportFlow 同闭包层）
       var __ib = root.querySelector('.act-import');
       if (__ib && !__ib.dataset.mnBound) { __ib.dataset.mnBound = '1'; __ib.addEventListener('click', openImportFlow); } // v0.3.5a：openPanel 可重入，防 handler 叠加
 
     function imStart(ids, mode) {
-      // v0.3.33：mode='card' 摘要卡 | 'full' 全文蒸馏（重要会话）
+      // mode='card' 摘要卡 | 'full' 全文蒸馏（重要会话）
       mode = mode || 'card';
       importBusy = true;
       var mb = imOpen(mode === 'full' ? '正在提取完整对话…' : '正在生成摘要卡…');   // v0.4.1：标题随模式
@@ -1012,7 +1012,7 @@
       var barEl = mb.querySelector('.bar > i');
       function setBar(pct) { if (barEl) barEl.style.width = pct + '%'; }
       window.dispatchEvent(new CustomEvent('mneme-ext:cmd', { detail: { type: 'summarize', sessions: ids, mode: mode } }));
-      // v0.4.3：会话处理完成后还有 estimate 往返——进度文案动态切换，避免"看似卡死"
+      // 会话处理完成后还有 estimate 往返——进度文案动态切换，避免"看似卡死"
       imHandlers.extractDone = function () {
         stage.innerHTML = '<p class="muted">正在估算预算…</p>';
         setBar(96);
@@ -1023,7 +1023,7 @@
             '<p class="muted">' + (mode === 'full' ? '拉取全文并整理对话对…' : '本地提取中…') + '</p>';   // v0.4.1：进度随模式
           setBar(p.total ? Math.round(p.done / p.total * 92) : 4);
         }
-        // v0.4.4：估算阶段可见（此前 estimate 往返期间进度条静止 = 用户以为卡死）
+        // 估算阶段可见（estimate 往返期间进度条不能静止）
         if (p.phase === 'estimate') {
           console.log('[P12] 进入估算阶段（content 已收到事件）');
           stage.innerHTML = '<p class="muted">正在估算预算…（大会话需要一些时间）</p>';
@@ -1032,7 +1032,7 @@
       };
       imHandlers.summariesReady = function (d) {
         console.log('[P11] content 收到 summaries-ready', { ok: d.ok, cards: d.cards, mode: d.mode, previewN: (d.preview || []).length });
-        // v0.4.2：batches 留在 injected（__pendingBatches），content 只收统计+preview 样本
+        // batches 留在 injected（__pendingBatches），content 只收统计+preview 样本
         if (!d.ok) {
           importBusy = false;
           var isFull = d.mode === 'full';
@@ -1061,7 +1061,7 @@
       var estTokens = estOk && est.estimate && est.estimate.estimateTokens !== undefined ? est.estimate.estimateTokens : Math.round((d.chars || 0) / 1.7);
       var exceed = estOk && est.estimate && est.estimate.wouldExceed === true; // v0.3.15：bridge 字符闸判定透出
       var exceedCap = estOk && est.estimate && est.estimate.maxImportChars !== undefined ? est.estimate.maxImportChars : 0;
-      // v0.3.36：预估费用按 DeepSeek 官方最便宜模型（V4-Flash）定价：
+      // 预估费用按 DeepSeek 官方最便宜模型（V4-Flash）定价：
       // 输入 1 元/百万 tokens，输出 2 元/百万 tokens；蒸馏输入:输出 ≈ 20:1 → 加权 1.05 元/百万 tokens
       var YUAN_PER_MTOK = 1.05;
       function estYuan(tokens) { return '≈ ￥' + (Math.round(tokens / 1000000 * YUAN_PER_MTOK * 100) / 100).toFixed(2); }
@@ -1135,8 +1135,8 @@
       try { console.warn('[mneme/panel] 挂载失败(不影响主链路):', panelErr); } catch (e2) {}
     }
 
-    // v0.3.5b：PANEL_TAG/plog 从 try 块内提升到函数体层——try 后段的侧栏挂载/面板构建
-    // 都在 try 外（严格模式块级作用域拿不到块内函数声明），此前 tryAttachSidebar 裸引用 plog 炸断挂载。
+    // PANEL_TAG/plog 提升到函数体层——try 后段的侧栏挂载/面板构建
+    // 在 try 外（严格模式块级作用域拿不到块内声明），裸引用会炸断挂载。
     var PANEL_TAG = '[mneme/panel]';
     function plog() {
       if (!cfgCache.debug) return;
@@ -1188,7 +1188,7 @@
     }
 
     // 菜单项：浅克隆原生行壳（tagName/class，自动继承 DS 侧栏样式），内容自绘。
-    // v0.3.4（task-7，用户视觉反馈：偏右/字小/图标风格不符）：关键样式直接从原生行
+    // 关键样式直接从原生行
     // （ds-dropdown-menu-option）及其文本子元素的 computedStyle 复制——padding/
     // 字号/行高/颜色/圆角/间距同源，不再手写固定值；图标改为与 DS 原生一致的
     // 简洁线条 SVG（1.5px stroke，currentColor，尺寸取原生行内 svg 实测宽）。
@@ -1284,7 +1284,7 @@
         if (Date.now() - lastWarn > 30000) { plog('侧栏锚点未命中（系统设置/帮助与反馈），持续观察中…'); lastWarn = Date.now(); }
         return;
       }
-      // v0.3.11：入口插在「系统设置」之后（用户要求位于系统设置与帮助与反馈之间）
+      // 入口插在「系统设置」与「帮助与反馈」之间
       var pick = rows.find(function (r) {
         var lt = (r.label && r.label.innerText) ? r.label.innerText.trim() : r.label;
         return lt === '系统设置';
@@ -1320,7 +1320,7 @@
     var CFG_DEFAULTS = { injectEnabled: true, collectEnabled: true, debug: false, injectMode: 'implicit', maxImportSessions: 20, maxImportChars: 1500000 };
     function syncCfgToUI(c) {
       root.querySelectorAll('input[data-cfg]').forEach(function (cb) { cb.checked = !!c[cb.dataset.cfg]; });
-      // v0.3.18（增强③）：radio（注入方式）与数字输入（闸值）同步
+      // radio（注入方式）与数字输入（闸值）同步
       root.querySelectorAll('input[data-cfg-radio]').forEach(function (rb) {
         if (String(c[rb.dataset.cfgRadio] || 'implicit') === rb.value) rb.checked = true;
       });
@@ -1331,7 +1331,7 @@
     }
     chrome.storage.local.get(CFG_DEFAULTS, function (c) { syncCfgToUI(c); });
     chrome.storage.onChanged.addListener(function (ch, area) {
-      // v0.5.19：增量同步——此前把单键 patch 传给 syncCfgToUI 全量刷，缺失键
+      // 增量同步——把单键 patch 传给 syncCfgToUI 时不能全量刷，缺失键
       // 取 undefined → !!undefined=false → 点 radio 后所有开关被错误置关。
       if (area !== 'local') return;
       root.querySelectorAll('input[data-cfg]').forEach(function (cb) {
@@ -1350,7 +1350,7 @@
         chrome.storage.local.set(u);
       });
     });
-    // v0.3.18（增强③）：注入方式单选 + 数字输入绑定
+    // 注入方式单选 + 数字输入绑定
     root.querySelectorAll('input[data-cfg-radio]').forEach(function (rb) {
       rb.addEventListener('change', function () {
         if (!rb.checked) return;
@@ -1375,8 +1375,8 @@
 
     // ---- 最近记忆（经 background getRecent → GET /memory/recent?limit=10） ----
     var listEl = root.querySelector('.list');
-    // v0.3.19：面板层自带格式化（renderList 此前引用 openPanel 内的 fmtInt → ReferenceError，
-    // 导致记忆库所有标签点击后列表永不渲染 = 用户看到的"一直加载中/加载失败"）。
+    // 面板层自带格式化（renderList 引用 openPanel 内的 fmtInt 会 ReferenceError，
+    // 导致记忆库所有标签点击后列表永不渲染）。
     function mnFmt(n) { return String(Number(n) || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
     function esc(s) {
       return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -1384,7 +1384,7 @@
       });
     }
     function renderList(items, tab) {
-      // v0.4.3：过滤管线缓冲行（pending-distill = 待蒸馏原料，尚未成为正式记忆）
+      // 过滤管线缓冲行（pending-distill = 待蒸馏原料，尚未成为正式记忆）
       // 否则全量导入后「记忆库」被几十条旧会话原始对话刷屏
       items = (items || []).filter(function (m) {
         return !(Array.isArray(m.tags) && m.tags.indexOf('pending-distill') >= 0);
@@ -1404,7 +1404,7 @@
           '<div class="imp" title="重要度 ' + imp + '/5">' + dots + '</div></div>';
       }).join('');
     }
-    // v0.3.18（增强②）：记忆库分组浏览——recent=最近；其余按 mneme 类型拉取
+    // 记忆库分组浏览——recent=最近；其余按 mneme 类型拉取
     var curTab = 'recent';
     var TYPE_LABEL = { preference: '偏好', constraint: '约束', decision: '决策', project: '项目', pitfall: '陷阱', history: '历史', rejected_solution: '否决方案' };
     var ALL_TYPES = ['preference', 'constraint', 'decision', 'project', 'pitfall', 'history', 'rejected_solution'];
@@ -1417,8 +1417,7 @@
         });
         return;
       }
-      // v0.3.20：改为按单类型并发拉取（单类型端点在 bridge 侧已实弹验证稳定；
-      // 此前 types=A,B,C 多类型一次请求在扩展侧返回 0 条，改并发后规避）。
+      // 按单类型并发拉取（多类型一次请求在扩展侧可能返回 0 条，并发规避）。
       var want = curTab === 'all' ? ALL_TYPES.slice() : [curTab];
       var acc = [];
       var pending = want.length;
@@ -1446,7 +1445,7 @@
         });
       });
     }
-    // v0.5.4：待蒸馏队列嵌入「记忆维护」面板（不再另起弹层）
+    // 待蒸馏队列嵌入「记忆维护」面板（不再另起弹层）
     function renderQueueCard() {
       var card = root.querySelector('#queue-card');
       if (!card) return;
@@ -1500,10 +1499,10 @@
         });
         html += '</div>';
         card.innerHTML = html;
-        // v0.5.15：刷新按钮
+        // 刷新按钮
         var qr = card.querySelector('.q-refresh');
         if (qr) qr.addEventListener('click', function () { qr.style.opacity = '.3'; renderQueueCard(); });
-        // v0.5.13：X 删除（事件委托——条目是动态渲染的）
+        // X 删除（事件委托——条目是动态渲染的）
         card.addEventListener('click', function (e) {
           var btn = e.target.closest ? e.target.closest('.q-del') : null;
           if (!btn) return;
@@ -1556,7 +1555,7 @@
       });
     }
 
-    // v0.3.19：左侧栏导航切换（DS 系统设置式：左 nav + 右内容）
+    // 左侧栏导航切换（DS 系统设置式：左 nav + 右内容）
     var __qrt = root.querySelector('.q-refresh-title');
     if (__qrt) __qrt.addEventListener('click', function () { __qrt.style.opacity = '.3'; renderQueueCard(); setTimeout(function () { __qrt.style.opacity = '.55'; }, 400); });
     root.querySelectorAll('.mnav-item').forEach(function (nb) {
@@ -1596,7 +1595,7 @@
     plog('面板挂载完成（侧栏入口模式）');
     if (cfgCache && cfgCache.debug) console.log('[mneme/panel] 面板挂载完成（侧栏入口模式）');
 
-  // ---- v0.3.1：injected → content 导入事件分发（单 listener；imHandlers 为 var 函数级可见）----
+  // ---- injected → content 导入事件分发（单 listener；imHandlers 为 var 函数级可见）----
   window.addEventListener('mneme-ext:event', function (e) {
     var d = e.detail || {};
     if (d.type === 'import-progress' && imHandlers && imHandlers.progress) imHandlers.progress(d);
@@ -1609,7 +1608,7 @@
     }
   });
 
-  // ---- v0.4.5：bg 命令转发——injected(MAIN world) 无 chrome.runtime，
+  // ---- bg 命令转发——injected(MAIN world) 无 chrome.runtime，
   // 经此监听器代发 chrome.runtime.sendMessage 并把结果经 'bg-result' 事件带回 ----
   window.addEventListener('mneme-ext:cmd', function (e) {
     var d = e.detail || {};
@@ -1626,7 +1625,7 @@
     }
   });
 
-  // ---- v0.3.4（task-7）：系统设置弹层视觉探测（用户点开系统设置后 Console 执行）----
+  // ---- 系统设置弹层视觉探测（点开系统设置后 Console 执行）----
   // dump 容器/组件 computedStyle 关键值 → 照数据替换 style 数组里的 --mn-* token，
   // 完成「系统设置」弹层一比一复刻（复制视觉参数，不复制页面 class，防改版）。
   window.__MNEME_SETTINGS_PROBE2__ = function () {
@@ -1700,7 +1699,7 @@
     console.log('[mneme/panel] 系统设置弹层探测:', JSON.stringify(out, null, 1).slice(0, 4000));
     return out;
   };
-  // ---- v0.3.0：DS 侧栏/设置弹层结构探测（Console 执行；锚点未命中时把输出发回来调阈值）----（Console 执行；锚点未命中时把输出发回来调阈值）----
+  // ---- DS 侧栏/设置弹层结构探测（Console 执行；锚点未命中时把输出发回来调阈值）----
   // 注意：此处位于 try 块外（strict 模式），不得引用块内函数（plog 等）——用 cfgCache 守卫。
   window.__MNEME_SIDEBAR_PROBE__ = function () {
     function s(v) { return String(v == null ? '' : v).slice(0, 100); }

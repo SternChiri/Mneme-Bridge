@@ -1,5 +1,4 @@
 // MAIN world 脚本（manifest 原生 world:"MAIN"，document_start）。
-// v0.2.1：
 //   A. 隐式注入：fetch 覆写把记忆块拼进 chat/completion 请求体最后一条 user 消息前。
 //   B. 拦截面加宽：支持 fetch(Request对象) 与 URLSearchParams；XHR 兜底覆盖
 //      （onreadystatechange/onprogress 双路增量 SSE 解析）。
@@ -40,7 +39,7 @@
   }
 
   function isChatUrl(url) { return /chat\/completion/i.test(String(url)); }
-  // v0.3.1：带 mneme-no-capture 头的请求是导入器自己的历史拉取，绝不拦截（双保险）
+  // 带 mneme-no-capture 头的请求是导入器自己的历史拉取，绝不拦截（双保险）
   function isNoCapture(init) { try { return !!(init && init.headers && (init.headers['mneme-no-capture'] || (init.headers.get && init.headers.get('mneme-no-capture')))); } catch (e) { return false; } }
 
   function collectStrings(v, out, depth) {
@@ -57,7 +56,7 @@
   function buildBlock(ctx, globalOnly, skipGlobal) {
     if (!ctx) return '';
     const lines = [];
-    // v0.5.39：skipGlobal=true（会话后续轮）只拼 related——画像/规则/偏好已在历史里
+    // skipGlobal=true（会话后续轮）只拼 related——画像/规则/偏好已在历史里
     if (!skipGlobal) {
     if (ctx.profile) lines.push('用户画像：' + ctx.profile.slice(0, 300));
     if (ctx.rules && ctx.rules.length) {
@@ -94,7 +93,7 @@
       : (j.messages && Array.isArray(j.messages.messages)) ? j.messages.messages
       : null;
     if (!msgs) {
-      // v0.2.3：DeepSeek 真实 schema 是顶层 prompt 字段（实测 2026-09-28）
+      // DeepSeek 真实 schema 是顶层 prompt 字段
       if (typeof j.prompt === 'string' && j.prompt) {
         userText = j.prompt;
       } else {
@@ -117,18 +116,18 @@
           : String(m.text || m.message || '');
         const cacheFresh = ctxCache.data && (Date.now() - ctxCache.at) < CTX_TTL_MS;
         const sameQuery = ctxCache.key === userText.slice(0, 120);
-        // v0.5.32：请求体历史里已带注入块（此前轮注入过且被 DS 原样回传历史）→ 不重复注入。
-        // 覆盖 sid 不可得（如 share 页）导致 isNewSession 恒 true 的场景——用户实测每轮都带画像。
+        // 请求体历史里已带注入块（此前轮注入过且被 DS 原样回传历史）→ 不重复注入。
+        // 覆盖 sid 不可得（如 share 页）导致 isNewSession 恒 true 的场景。
         const historyHasBlock = msgs.some((mm) => {
           const c = mm && mm.content;
           const s = typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => (typeof x === 'string' ? x : (x && x.text) || '')).join('') : (c && c.text) || '';
           return s.indexOf('记忆参考 | 来自本机记忆库') >= 0;
         });
           if (injectMode === 'visible') { dbg('visible 模式，implicit 改写让位'); break; }
-        // v0.5.39（用户澄清）：每一轮都要注入 related——历史已含全局块时只跳过全局段（skipGlobal），
+        // 每一轮都要注入 related——历史已含全局块时只跳过全局段（skipGlobal），
         // 而不是整轮跳过。isNewSession 判定仍用于区分首轮（全局段）与后续轮（仅 related）。
         var skipGlobalThisRound = historyHasBlock;
-        // v0.5.39：移除'同会话后续轮次跳过'——每一轮都注入 related（后续轮 skipGlobal 不带全局段）
+        // 每一轮都注入 related（后续轮 skipGlobal 不带全局段）
         if (!cacheFresh || !sameQuery) { dbg('无新鲜 ctx，跳过注入'); break; }
         const block = buildBlock(ctxCache.data, false, skipGlobalThisRound);
         if (!block) { dbg('ctx 为空块'); break; }
@@ -154,12 +153,12 @@
         break;
       }
     }
-    // v0.2.3：msgs 循环没注入成功时，尝试顶层 prompt 字段（DeepSeek 真实 schema）
+    // msgs 循环没注入成功时，尝试顶层 prompt 字段（DeepSeek 真实 schema）
     if (!injected && userText) {
       const cacheFresh = ctxCache.data && (Date.now() - ctxCache.at) < CTX_TTL_MS;
       const sameQuery = ctxCache.key === userText.slice(0, 120);
       const globalOnly = cacheFresh && !sameQuery; // v0.2.7：query 不匹配（打字快于预取）时降级注入全局块
-      // v0.5.32：prompt（多轮全文）里已带注入块 → 不重复注入画像/偏好（用户实测每轮都带的场景）
+      // prompt（多轮全文）里已带注入块 → 不重复注入画像/偏好
       const historyHasBlock = userText.indexOf('记忆参考 | 来自本机记忆库') >= 0;
       if (cacheFresh && !sameQuery) { try { window.dispatchEvent(new CustomEvent('mneme-ext:cmd', { detail: { type: 'prefetch', text: userText.slice(0, 120) } })); } catch (e) {} }   // v0.5.26
       if (injectMode === 'visible') { dbg('visible 模式，implicit 改写让位'); }
@@ -179,14 +178,14 @@
     return { body: JSON.stringify(j), userText: userText, injected: injected };
   }
 
-  // ---- SSE 收集器（fetch / XHR 共用，v0.2.6） ----
+  // ---- SSE 收集器（fetch / XHR 共用） ----
   // 实测协议（chat.deepseek.com）：JSON-Patch 增量流。
   //   状态快照：{"v":{"response":{...,"fragments":[{type:"THINK",...}]}}}
   //   追加：{"p":"response/fragments/-1/content","o":"APPEND","v":"片段"}
   //   续传：{"v":"片段"}（归属上一路径）
-  //   fragment 切换信号（v0.2.6 新增识别）：patch p 以 /type 结尾且 v 为字符串，
+  //   fragment 切换信号：patch p 以 /type 结尾且 v 为字符串，
   //   或 p=fragments/<idx> 且 v 为带 type 的 fragment 对象。
-  // v0.2.6 双缓冲：thinking 内容进 thinkBuf 而非直接丢弃——流结束时若 assistant
+  // 双缓冲：thinking 内容进 thinkBuf 而非直接丢弃——流结束时若 assistant
   // 为空则回退用 thinkBuf（宁可脏不丢失；DSH 在线时 autoDream 会巩固）。
   function createCollector(userText) {
     let assistant = '';
@@ -214,7 +213,7 @@
       }
       dbg('结束(', how2, ') assistant_len=' + finalText.length,
           assistant ? '' : ('(回退 thinkBuf ' + thinkBuf.length + ' 字符)'));
-      // v0.5.14：剥离注入块（会话开场注入的 [记忆参考|...] 段不该回流蒸馏——
+      // 剥离注入块（会话开场注入的 [记忆参考|...] 段不该回流蒸馏——
       // 它是把已有记忆再蒸一遍，还会造成记忆自我引用污染）
       var __u = userText || '';
       var __h = __u.indexOf(HEADER);
@@ -223,8 +222,8 @@
         __u = __f >= 0 ? (__u.slice(0, __h) + __u.slice(__f + FOOTER.length)) : __u.slice(0, __h);
         __u = __u.trim();
       }
-      // v0.5.20：sessionId 改用 rewriteBody 抓到的请求体 chat_session_id（lastSessionId）——
-      // URL /a/<id> 匹配在该站点路由下不可靠（此前一直 null 的根因）
+      // sessionId 用 rewriteBody 抓到的请求体 chat_session_id（lastSessionId）——
+      // URL /a/<id> 匹配在该站点路由下不可靠
       window.dispatchEvent(new CustomEvent('mneme-ext:event', {
         detail: { type: 'conversation', user: __u, assistant: finalText, confidence: how2, sessionId: lastSessionId, reqId: ++seq }
       }));
@@ -243,14 +242,14 @@
         const j = safeJson(payload);
         if (!j) continue;
         const hasP = typeof j.p === 'string';
-        // v0.2.7 结构发现：THINK→正文 的切换信号上轮没认出来——把每种新事件形态记下来
+        // THINK→正文 的切换信号——把每种新事件形态记下来
         if (debug) {
           const vt = j.v === null ? 'null' : (typeof j.v + (j.v && typeof j.v === 'object' && typeof j.v.type === 'string' ? ':' + j.v.type : ''));
           const sig = (hasP ? j.p + (j.o ? ':' + j.o : '') : '(nop)') + '|' + vt;
           if (!seenSig[sig]) { seenSig[sig] = 1; dbg('结构信号', sig, JSON.stringify(j).slice(0, 260)); }
         }
 
-        // v0.2.8：fragment 数组追加（实测切换信号！）
+        // fragment 数组追加（切换信号）
         // {"p":"response/fragments","o":"APPEND","v":[{"id":3,"type":"RESPONSE","content":"已",...}]}
         // THINK→RESPONSE 的切换就发生在这里；fragment 自带首个 content 块。
         if (j.v && Array.isArray(j.v) && /response\/fragments$/.test(j.p || '')) {
@@ -298,7 +297,7 @@
         }
 
         if (hasP) {
-          // v0.2.7 启发：绝对索引 >=1 的 content patch 说明流已切到新 fragment（THINK 是 fragments[0]）
+          // 绝对索引 >=1 的 content patch 说明流已切到新 fragment（THINK 是 fragments[0]）
           const am = j.p.match(/fragments\/(\d+)\/content/);
           if (am && Number(am[1]) >= 1 && inThink) { inThink = false; dbg('索引切换启发: fragment#' + am[1], '→ inThink=false'); }
           lastPath = j.p;
@@ -317,7 +316,7 @@
           if (debug) dbg('丢弃通道标记:', String(piece).trim());
           continue;
         }
-        // v0.2.6：inThink 门控覆盖所有分片来源（v0.2.5 只挡裸 v，content/text 泄漏 8 字符）
+        // inThink 门控覆盖所有分片来源（只挡裸 v 会从 content/text 泄漏字符）
         if (inThink) { thinkBuf += piece; continue; }
         assistant += piece;
       }
@@ -347,11 +346,11 @@
     };
   }
 
-  // ---- fetch 覆写（v0.2.1：Request 对象 + 非 string body 容错） ----
+  // ---- fetch 覆写（Request 对象 + 非 string body 容错） ----
   const origFetch = window.fetch;
   window.fetch = async function (input, init) {
     try {
-      // v0.3.1：导入器自己的请求（mneme-no-capture 头）直接走原生 fetch，绝不拦截
+      // 导入器自己的请求（mneme-no-capture 头）直接走原生 fetch，绝不拦截
       if (isNoCapture(init)) return origFetch.apply(this, arguments);
       let url = '';
       let method = 'GET';
@@ -372,7 +371,7 @@
           else if (typeof URLSearchParams !== 'undefined' && init.body instanceof URLSearchParams) bodyText = init.body.toString();
         }
       }
-      // v0.2.1：debug 时打印所有 POST（命中与否一目了然）
+      // debug 时打印所有 POST（命中与否一目了然）
       if (debug && method === 'POST') dbg('POST', url, isChatUrl(url) ? '[chat命中]' : '[未命中chat规则]');
 
       const hit = isChatUrl(url) && bodyText != null;
@@ -434,7 +433,7 @@
     }
   };
 
-  // ---- XHR 兜底（v0.2.1：页面若用 XMLHttpRequest 发聊天请求也能收集） ----
+  // ---- XHR 兜底（页面若用 XMLHttpRequest 发聊天请求也能收集） ----
   const XO = window.XMLHttpRequest && window.XMLHttpRequest.prototype;
   if (XO && XO.open && XO.send) {
     const origOpen = XO.open;
@@ -495,7 +494,7 @@
 
 
   // ====================================================================
-  // v0.3.1 旧会话导入（task-6）：MAIN world 页面态 fetch 拉取 DeepSeek 历史。
+  // 旧会话导入：MAIN world 页面态 fetch 拉取 DeepSeek 历史。
   // 【为什么这里发网络请求】扩展 host_permissions 只含 127.0.0.1/localhost:8760，
   // 无法从 background 调 chat.deepseek.com 域；历史接口需要页面会话（cookie+
   // 登录态），Main world 原生 fetch 自动带页面凭据——这是「所有网络走
@@ -516,14 +515,14 @@
   var __pendingBatches = null;   // v0.4.2：确认前暂存的导入批次（留在 injected，不跨 world 传）
   function importFetch(url, opts) {
     opts = opts || {};
-    // v0.4.3：90s AbortController 超时——大会话 history_messages 响应数 MB，
+    // 90s AbortController 超时——大会话 history_messages 响应数 MB，
     // 无超时则 fetch 挂起会让导入链路假死（进度条停住无提示）。
     var ctrl = new AbortController();
     var timer = setTimeout(function () { ctrl.abort(); }, 90000);
     opts.signal = ctrl.signal;
     var done = function (p) { clearTimeout(timer); return p; };
     var headers = Object.assign({}, opts.headers || {}, { 'mneme-no-capture': '1' });
-    // v0.3.2：会话 API 不认 cookie，要 Bearer token（实测 probe 返回 40002 Missing Token）。
+    // 会话 API 不认 cookie，要 Bearer token（缺 token 返回 40002 Missing Token）。
     // 网页版把 token 存 localStorage['userToken']（JSON 字符串，形如 {"value":"<uuid>"} 或裸串）。
     // 读不到就不附（保持旧行为，probe 会再次报 Missing Token 便于定位）。
     try {
@@ -600,9 +599,9 @@
     var d = new Date(n);
     return isNaN(d.getTime()) ? null : d.toISOString();
   }
-  // v0.3.16：时间戳归一为毫秒（秒级/毫秒级/ISO 串三形态容错）。
+  // 时间戳归一为毫秒（秒级/毫秒级/ISO 串三形态容错）。
   // 背景：DS 的 updated_at/inserted_at 是**秒级** float（如 1790608094.596），
-  // 此前原样传给 content 侧 new Date(1790608094) → 1970-01-22。
+  // 原样传给 new Date 会得到 1970 年代日期。
   function normTs(ts) {
     if (ts == null || ts === '') return null;
     if (typeof ts === 'string') { var d0 = new Date(ts); return isNaN(d0.getTime()) ? null : d0.getTime(); }
@@ -643,7 +642,7 @@
         for (var k = 0; k < ids.length; k++) {
           var msgs = [];
           if (k === 0) console.log('[mneme/inj] 开始处理首会话', { id: String(ids[k] && ids[k].id).slice(0, 20), fromFile: !!(ids[k] && ids[k].fromFile), rawLen: (ids[k] && ids[k].raw) ? ids[k].raw.length : 0 });
-          // v0.3.20：文件导入的会话自带 raw 消息 → 直接用（突破接口 100 条限制）
+          // 文件导入的会话自带 raw 消息 → 直接用（突破接口 100 条限制）
           if (ids[k] && ids[k].fromFile && Array.isArray(ids[k].raw) && ids[k].raw.length) {
             msgs = ids[k].raw;
           } else {
@@ -681,7 +680,7 @@
       var m = msgs[i] || {};
       var role = String(m.role || '').toLowerCase();
       if (!role && Array.isArray(m.fragments)) {
-        // v0.3.26：role 缺失时按片段类型推断（REQUEST→user / RESPONSE→assistant）
+        // role 缺失时按片段类型推断（REQUEST→user / RESPONSE→assistant）
         for (var rf = 0; rf < m.fragments.length; rf++) {
           var rft = String((m.fragments[rf] || {}).type || '').toUpperCase();
           if (rft === 'REQUEST') { role = 'user'; break; }
@@ -698,8 +697,8 @@
       }
     }
     if (pendUser) pushPair(pairs, pendUser, { a: '', ts: pendUser.ts }); // 末尾悬挂 user（无 assistant 配对）
-    // v0.5.21：导入条目必须带会话 id —— bridge 的 sessionKeyOf 读 it.sessionId，
-    // 此前从不带 → 导入原料全部 session_id=null、蒸出的记忆无法溯源（用户实测确认）。
+    // 导入条目必须带会话 id —— bridge 的 sessionKeyOf 读 it.sessionId，
+    // 不带则导入原料 session_id=null、蒸出的记忆无法溯源。
     var __sessId = (sess && sess.id) ? String(sess.id) : null;
     if (__sessId) { for (var pi = 0; pi < pairs.length; pi++) pairs[pi].sessionId = __sessId; }
     return pairs;
@@ -713,8 +712,8 @@
   function firstText(m) {
     if (m == null) return '';
     if (typeof m === 'string') return m;
-    // v0.3.26：DS 历史接口的消息体是 fragments[]（REQUEST/RESPONSE/THINK），
-    // 此前只找 m.content → undefined → 兜底取"最长字符串"，会把思维链当成正文。
+    // DS 历史接口的消息体是 fragments[]（REQUEST/RESPONSE/THINK），
+    // 只找 m.content 会 undefined → 兜底取"最长字符串"会把思维链当成正文。
     if (Array.isArray(m.fragments) && m.fragments.length) {
       var body = '';
       for (var fi = 0; fi < m.fragments.length; fi++) {
@@ -732,7 +731,7 @@
   }
 
   // MAIN world 侧 sendMessage 重试（此 IIFE 无 retrySend，就地小实现）
-  // v0.4.5：本脚本运行在 MAIN world，chrome.runtime 不可用！
+  // 本脚本运行在 MAIN world，chrome.runtime 不可用！
   // 所有到 background 的消息改经 content 转发：dispatch 'bg' 命令 → content 代发 → 'bg-result' 带回。
   var __bgSeq = 0;
   var __bgPending = {};
@@ -752,7 +751,7 @@
     setTimeout(function () { if (__bgPending[id]) { delete __bgPending[id]; cb(null); } }, 30000);
   }
   function retrySendMessage(msg, tries, cb) {
-    // v0.4.5：经 content 转发（原 chrome.runtime.sendMessage 在 MAIN world 不可用 → 全部静默失败）
+    // 经 content 转发（chrome.runtime.sendMessage 在 MAIN world 不可用 → 全部静默失败）
     bgSend(msg, function (r) {
       if (!r && tries > 0) { setTimeout(function () { retrySendMessage(msg, tries - 1, cb); }, 400); return; }
       cb(r);
@@ -770,8 +769,8 @@
         var slim = [];
         for (var i = 0; i < list.length; i++) {
           var s0 = list[i] || {};
-          // v0.3.23：带上轮次（此前 slim 只有 id/title/ts → 按轮次排序恒为 0，
-          // 回退时间后与「按时间」结果完全一致 = 用户反馈的两种排序相同）
+          // 带上轮次（slim 只有 id/title/ts → 按轮次排序恒为 0，
+          // 回退时间后与「按时间」结果完全一致）
           var msgCnt = Number(s0.current_message_id || s0.version || s0.message_count || s0.msg_count || 0) || 0;
           slim.push({
             id: String(s0.chat_session_id || s0.id || s0.session_id || ''),
@@ -786,14 +785,14 @@
         window.dispatchEvent(new CustomEvent('mneme-ext:event', { detail: { type: 'sessions-list', sessions: [], error: String(er) } }));
       });
     } else if (d.type === 'summarize') {
-      // v0.3.28：入口诊断——确认命令到达、会话数与首项结构
+      // 入口诊断——确认命令到达、会话数与首项结构
       console.log('[mneme/inj] 收到 summarize 命令', {
         n: (d.sessions || []).length,
         mode: d.mode || 'card',
         first: (d.sessions && d.sessions[0]) ? { id: String(d.sessions[0].id).slice(0, 20), fromFile: !!d.sessions[0].fromFile, hasRaw: Array.isArray(d.sessions[0].raw) } : null,
         busy: __importBusy
       });
-      // v0.3.32：full 模式 = 全文蒸馏（重要会话），走 extractPairs 非摘要管线
+      // full 模式 = 全文蒸馏（重要会话），走 extractPairs 非摘要管线
       var funnelMode = d.mode === 'full' ? false : true;
       // L2 + L3 前半：白名单 → 摘要卡/全文 → estimate
       runFunnel({ sessions: d.sessions, summarizeMode: funnelMode },
@@ -809,8 +808,8 @@
             return;
           }
           var batches = res.batchesData || [];
-          // v0.4.2：batches 留在 injected 侧全局持有（__pendingBatches），不再跨 world 传大数组；
-          // content 只收统计与预估。用户确认后 send-confirm 不带数据，injected 直接用 __pendingBatches 发送。
+          // batches 留在 injected 侧全局持有（__pendingBatches），不再跨 world 传大数组；
+          // content 只收统计与预估。确认后 send-confirm 不带数据，injected 直接用 __pendingBatches 发送。
           __pendingBatches = batches;
           var allItems = [];
           for (var b = 0; b < batches.length; b++) allItems = allItems.concat(batches[b]);
@@ -834,7 +833,7 @@
         }
       );
     } else if (d.type === 'send-confirm') {
-      // v0.4.2：确认后直接用 injected 持有的 __pendingBatches（不再从事件回传大数组）
+      // 确认后直接用 injected 持有的 __pendingBatches（不再从事件回传大数组）
       sendBatches(__pendingBatches || [], function (p) {
         window.dispatchEvent(new CustomEvent('mneme-ext:event', {
           detail: { type: 'import-progress', phase: p.phase, done: p.done, total: p.total, imported: p.imported || 0 }
@@ -866,8 +865,8 @@
   });
 
   // debug 探针：不打 bridge，只打印两步接口真实形态（首火校准用）
-  // v0.3.19：分页参数探测——逐一尝试候选参数，报告「返回条数 + 首条 id」是否变化，
-  // 用于确定 DS fetch_page 的真实分页口径（用户 Console 执行 __MNEME_PAGE_PROBE__()）。
+  // 分页参数探测——逐一尝试候选参数，报告「返回条数 + 首条 id」是否变化，
+  // 用于确定 DS fetch_page 的真实分页口径（Console 执行 __MNEME_PAGE_PROBE__()）。
   window.__MNEME_PAGE_PROBE__ = async function () {
     var out = { baseline: null, trials: [] };
     async function get(u) {
@@ -948,7 +947,7 @@
 
 
   // ====================================================================
-  // v0.3.5 系统设置弹层样式探测（v0.3.5 起放 MAIN world：Console 默认在此 world，
+  // 系统设置弹层样式探测（MAIN world：Console 默认在此 world，
   // isolated world 的 window 与页面互不可见，放 content.js 调不到）。
   // 用法：点开「系统设置」弹层后执行 __MNEME_SETTINGS_PROBE__()，
   // 输出存 __MNEME_SETTINGS_PROBE_LAST__。
@@ -962,7 +961,7 @@
         border: cs.border, shadow: cs.boxShadow.slice(0, 80), font: cs.fontSize + '/' + cs.lineHeight + ' ' + cs.fontFamily.slice(0, 30),
         padding: cs.padding, gap: cs.gap, zIndex: cs.zIndex };
     }
-    // v0.3.6：弃用「fixed+宽度窗」硬条件（实测 DS 弹层可能 absolute/尺寸出窗），
+    // 不用「fixed+宽度窗」硬条件（DS 弹层可能 absolute/尺寸出窗），
     // 改为「含『系统设置』文本的元素向上找最大可见容器」——从命中文本节点逐级上爬，
     // 取到 body 之前体积最大（宽>250 且高>200）的祖先作为弹层容器。
     var marker = null;
@@ -1018,7 +1017,7 @@
 
 
   // ====================================================================
-  // v0.3.14 旧会话导入·三层漏斗（task-8）：
+  // 旧会话导入·三层漏斗：
   //   L1 会话勾选列表（UI 在 content；此处 fetchAllSessions 全量分页拉列表）
   //   L2 摘要卡（buildSummaryCard：本地截取）
   //   L3 estimate 预估确认（estimateBatch → background importEstimate →
@@ -1035,7 +1034,7 @@
     return clip(m ? m[0] : t, n);
   }
   function buildSummaryCard(sess, msgs) {
-    // v0.3.32（摘要卡 v3）：按「信息价值」选材而非按轮次流水。
+    // 摘要卡：按「信息价值」选材而非按轮次流水。
     // 调研结论：有效摘要提取 durable 信息（决策/偏好/事实/结局），过程性轮次是噪声。
     var users = [], assts = [];
     for (var i = 0; i < msgs.length; i++) {
@@ -1096,7 +1095,7 @@
   // 全量拉会话列表（L1 数据源；去重分页，上限 200 防失控）
   async function fetchAllSessions(onProg) {
     var all = [];
-    // v0.3.18：拉全部会话（此前 3 页/200 上限；实测 limit=N 无效 → 永远只有首页 100 条）。
+    // 拉全部会话（limit=N 参数无效 → 永远只有首页 100 条，需翻页拉全）。
     // 分页参数多策略轮换：offset=N → page=N（DS 各版本口径不一，命中即续拉）。
     for (var pg = 0; pg < 60 && all.length < 3000; pg++) {
       var u;
@@ -1128,7 +1127,7 @@
   }
   // L3：estimate 桩位对接（background importEstimate → POST /memory/import/estimate）
   function estimateBatch(body, cb) {
-    // v0.3.31：重试 2→4 次（SW 冷启动竞态下 2 次常失败 → 误降级本地估算），失败打日志
+    // 重试 4 次（SW 冷启动竞态下次数太少常失败 → 误降级本地估算），失败打日志
     console.log('[P9a] estimate sendMessage 发出');
     retrySendMessage({ type: 'importEstimate', body: body }, 4, function (r) {
       console.log('[P9b] estimate 返回', { ok: !!(r && r.ok), hasR: !!r });
@@ -1137,7 +1136,7 @@
     });
   }
   // 漏斗编排：summarizeMode=true 时 items 用摘要卡（不发全文），batchesData 交回 content
-  // v0.3.30：fetchSessionList 同样提升到顶层（原在 runImport 内，被 runImport 调用）。
+  // fetchSessionList 提升到 IIFE 顶层（多处调用）。
   async function fetchSessionList() {
     var result = { probed: [] };
     try {
@@ -1178,9 +1177,7 @@
   }
 
   // ====================================================================
-  // v0.3.30：fetchMessages 提升到 IIFE 顶层。
-  // 此前它定义在已废弃的 runImport 内部（d=2），而实际执行的 runFunnel 在同层(d=1)——
-  // 跨作用域调用抛 ReferenceError 被 async IIFE 的 try/catch 静默吞掉，
+  // fetchMessages 提升到 IIFE 顶层（跨作用域调用在函数内部会抛 ReferenceError 被吞）。
   // 表现为「点下一步后无任何日志、摘要卡恒为空」。
   // ====================================================================
   async function fetchMessages(sessionId) {
@@ -1223,7 +1220,7 @@
         console.log('[mneme/inj] runFunnel 开始', { mode: summarizeMode ? 'summary-card' : 'full', sessions: ids.length });
         for (var k = 0; k < ids.length; k++) {
           var msgs = [];
-          // v0.3.32：card 模式下文件会话走精简 raw；full 模式下精简 raw 不够 → 回退 API 拉全文
+          // card 模式下文件会话走精简 raw；full 模式下精简 raw 不够 → 回退 API 拉全文
           //（若该会话不在最近 100 条内会拉空 → 自动降级为 raw 精简版摘要卡并在 probed 记录）。
           if (summarizeMode && ids[k] && ids[k].fromFile && Array.isArray(ids[k].raw) && ids[k].raw.length) {
             msgs = ids[k].raw;
@@ -1235,13 +1232,13 @@
           if (summarizeMode) {
             // L2：摘要卡形态（蒸馏只看卡）
             var sessForCard = ids[k];
-            // v0.3.28：会话自带 rounds（API 由 current_message_id 推导 / 文件按 REQUEST 计数）
+            // 会话自带 rounds（API 由 current_message_id 推导 / 文件按 REQUEST 计数）
             // 比"消息条数/2"更准确，优先采用。
             if (sessForCard && Number(sessForCard.rounds) > 0) {
               sessForCard = { id: sessForCard.id, title: sessForCard.title, ts: sessForCard.ts, rounds: Number(sessForCard.rounds) };
             }
             var card = buildSummaryCard(sessForCard, msgs);
-            // v0.3.27：只有真正提取到内容（含"任务："非空）才算有效卡，否则丢弃并记录
+            // 只有真正提取到内容（含"任务："非空）才算有效卡，否则丢弃并记录
             var cardOk = /任务：[^\n]{2,}/.test(card) || /轮数：[1-9]/.test(card);
             if (!cardOk) { result.probed.push({ name: 'card-empty', id: String(ids[k].id).slice(0, 20), msgs: msgs.length }); }
             if (cardOk) {
