@@ -2,7 +2,7 @@
 
 mneme 跨端记忆桥：把 DSH 的 mneme 记忆池通过一个带鉴权的 REST 服务暴露给
 Edge 扩展、手机等外部消费方。零 npm 依赖，Node >= 22.5（用到 `node:sqlite`
-与 `AbortSignal.timeout`；本机 24.x 已验证）。
+与 `AbortSignal.timeout`）。
 
 ## 启动
 
@@ -31,7 +31,7 @@ node server.js
 | 模式 | 触发条件 | 行为 |
 |---|---|---|
 | remote | `mneme.mode` = `"remote"`，或 `"auto"` 且探测到上游 8790 `/health` 活着 | 纯代理：请求转发 DSH standalone API（Bearer mneme token） |
-| embedded | `mneme.mode` = `"embedded"`，或 `"auto"` 且 8790 不在 | in-process import mneme 0.8.9 lib，直接开 `memory.db`（同库同语义） |
+| embedded | `mneme.mode` = `"embedded"`，或 `"auto"` 且 8790 不在 | in-process import mneme lib（版本门控 `allowedLibRange`，建议 ≥0.8.14），直接开 `memory.db`（同库同语义） |
 
 - 探测只在启动时做一次；运行中不热切换（安全理由见 server.js 头注）。
 - **remote 的前提**：DSH 面板「设置 → 外部访问」打开（kv `external_api.enabled=true`），
@@ -68,6 +68,8 @@ node server.js
 - 环境变量 `MNEME_BRIDGE_CONFIG` 可把配置重定向到任意路径（多实例隔离）；
   `MNEME_BRIDGE_LOG_DIR` 同理重定向日志。
 - 换过 mneme token（面板重置）就同步改 `mneme.token`。
+- `mneme.contextSource`（v0.6.2）：`/memory/context` 的 pins/related 数据源——`"auto"`（默认，优先上游注入管线端点，失败降级自建启发式）| `"endpoint"`（仅端点，失败即错）| `"heuristic"`（仅自建启发式，等价 0.6.1 行为）。端点路径需 mneme ≥0.8.14（remote 为 `GET /context`，embedded 为 `service.injectCandidates`）。v0.6.2 起自建 pins 两级正则启发式（INTERACT/SCENE）退役移除，降级路径为朴素身份直查（preference/constraint 且 importance≥4）。
+- **建议 mneme ≥0.8.14**：`GET /context` 注入管线全语义 + strictScope 图召回绕过修复（#371）。`allowedLibRange` 默认 `^0.8` 不变。
 
 ## REST 接口
 
@@ -78,11 +80,11 @@ node server.js
 |---|---|---|---|
 | GET | /health | — | 免鉴权；`{ok, backend, uptimeMs, mneme:{url或dataDir}}` |
 | POST | /memory/save | `{type,title,content,importance?,tags?,source?,sensitivity?,occurred_at?}` | 转发 mneme `POST /memories`；embedded 走 `service.saveWithDedupe`。返回 201 created / 200 merged |
-| POST | /memory/search | `{q, mode?=auto, topK?=5}` | 转发 mneme `GET /search`；embedded 走 `service.searchMemories`（失败退化关键词） |
+| POST | /memory/search | `{q, mode?=auto, topK?=5, agentScope?, workspaceScope?}` | remote 转发 mneme `GET /search`、embedded 传 `service.searchMemories` 的 scope 选项（v0.6.2 起两 mode 同口径：scope 两参显式传入即生效——软加权/strictScope 由 mneme 处理；不传行为不变） |
 | GET | /memory/recent | `?limit=10` | mneme `GET /memories?order=chrono&limit=N` |
 | POST | /memory/conversation | `{user, assistant, url?, sessionId?}` | 合成 history 记忆（title=「网页对话：」+user 前 40 字，tags=`["web","edge"]`，source=`"edge-extension"`）；bridge 侧 sha256(user+\n+assistant) LRU 500 去重，命中直接 `200 {deduped:true}` |
 | GET | /memory/status | — | mneme /status 透传 + `backend` 字段 |
-| GET | /memory/context | `?q=&topK=`（均可省） | v0.2 组合聚合：一次返回 `{profile, rules, pins, related}`——用户画像 + 行为规则 + 高价值记忆（importance≥5，`contextPinsLimit` 条）+ 相关记忆（q 非空时搜 `contextRelatedTopK` 条）。pins/related 每条只留 `{title,content,importance,type}` 且 content 截 160 字。q 为空时 related=[]（不打搜索）。网页端首开页面调这一个路由即可拿到完整上下文。v0.6.1 起默认排除带 `sensitivity` 标注的条目（`contextExcludeSensitive` 可关） |
+| GET | /memory/context | `?q=&topK=`（均可省） | v0.2 组合聚合：一次返回 `{profile, rules, pins, related}`——用户画像 + 行为规则 + 高价值记忆（importance≥5，`contextPinsLimit` 条）+ 相关记忆（q 非空时搜 `contextRelatedTopK` 条）。pins/related 每条只留 `{title,content,importance,type}` 且 content 截 160 字。q 为空时 related=[]（不打搜索）。网页端首开页面调这一个路由即可拿到完整上下文。v0.6.1 起默认排除带 `sensitivity` 标注的条目（`contextExcludeSensitive` 可关）。v0.6.2 起 pins/related 优先来自上游注入管线（`contextSource`，响应附 `via: "endpoint" | "heuristic"` 标记），sensitivity / 元记忆过滤与 4 字段瘦身仍在 bridge 侧 |
 | POST | /memory/distill | — | v0.3：手动触发一轮蒸馏（DSH headless 批量总结缓冲的网页对话）。202 受理异步执行；仅 embedded 模式可用（remote 503） |
 | POST | /memory/import | `{items:[{user,assistant,url?,sessionId?,kind?,occurred_at?}]}` | v0.4：旧会话批量导入（≤200/批）。合成 history 记忆入蒸馏缓冲；sessionId 进 tags（`imp-sess:<sid>`）供断点续跑；`kind:"summary-card"` 标记摘要卡形态。超 `maxImportChars` 返回 `400 {error:"too-large", estimateChars}` |
 | POST | /memory/import/estimate | `{items:[...]}` | v0.4：导入预估器（纯计算不落库）。返回 `{estimateChars, estimateTokens(≈chars/1.6), sessions, maxImportChars, wouldExceed}`——UI 据此渲染「预计消耗」让用户确认后才调 /memory/import |
@@ -91,6 +93,21 @@ node server.js
 - type 枚举（save）：`preference / project / decision / history / rejected_solution / pitfall / constraint`
 - CORS 全放开（`*` + `OPTIONS` 预检 204）；真正的门是 token 不是 Origin。
 - 上游 4xx 透传状态码与 `error`；上游网络层不可达 → `502 {error:"mneme-unavailable"}`。
+
+## 独立 daemon（v0.6.2 文档，上游 ≥0.8.14）
+
+mneme 0.8.14 起自带独立守护进程 `dsh-mneme-serve`——mneme 第一次能在 DSH 宿主之外常驻，
+网页记忆读写不再要求 DSH 开机：
+
+```bash
+npx dsh-mneme-serve --memory-dir <DSH_HOME>/memory --port 8790 --host 127.0.0.1
+```
+
+- `--embed off|local|ollama|openai` 控制向量检索（默认 `local`，无 DSH 宿主时 remote /search 也有语义路）。
+- bridge 在 `mneme.mode="auto"` 下探测 8790 存活即自动落 remote（无需 DSH 面板开「外部访问」）；
+  daemon 不在时照常回落 embedded。daemon 与 DSH 宿主是互斥单写者（无 LLM 结构性保证），
+  长期方向见上游 #363。
+- Phase 2（移动端 PWA）计划基于 daemon 架构，直达 mneme、绕开本 bridge。
 
 ## DSH 会话清理（v0.6.1，task-12）
 
@@ -140,13 +157,13 @@ curl -X POST .../memory/import           # 2. 确认后分批导入（≤200/批
 ## 测试
 
 ```bat
-node scriptssmoke.mjs
+node scripts/smoke.mjs
 ```
 
 覆盖：假 mneme 打桩下的 remote 四链路（save/search/recent/conversation+去重）、
 副本库下的 embedded 同四链路、401/502/超时分支、OPTIONS 预检、
 生产库零接触校验（前后 stat 对比）。**smoke 不写生产库**——embedded 链路跑在
-复制到临时目录的库副本上（含 -wal/-shm）。最近一次结果：**98/98 PASS**（v0.4 含 estimate 预估/字符闸/断点续跑端到端断言）。
+复制到临时目录的库副本上（含 -wal/-shm）。最近一次结果：**114/114 PASS**（v0.6.2 含 /context 端点优先与降级、scope 透传断言；历史版本含 estimate 预估/字符闸/断点续跑端到端断言）。
 
 设计文档核对项（docs/mneme-bridge-design.md §6）：
 
@@ -172,7 +189,7 @@ node scriptssmoke.mjs
 
 网页端对话不再逐轮堆进记忆库：扩展上报的对话先缓冲（tags 标记 `pending-distill`），
 **DSH 一启动，bridge 自动把缓冲的对话批量交给 DSH headless 蒸馏**成精炼的 mneme 记忆条目入库
-（source=`dsh-distiller`，tags 带 `distilled`），原始对话随后标记完成。DSH 没开时一切静默。
+（source=`dsh-distiller:web/<会话id>`，tags 带 `distilled`），原始对话随后标记完成。DSH 没开时一切静默。
 
 ### 数据流
 

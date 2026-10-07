@@ -1,12 +1,12 @@
-// lib/embedded.js —— embedded 模式后端：in-process 组装 mneme 0.8.9 service
-// 组装链照抄 lib/index.js L191-286（apply）：
+// lib/embedded.js —— embedded 模式后端：in-process 组装 mneme service
+// 组装链对齐上游 lib/index.js 的 apply 流程：
 //   mkdir memoryDir → createStore(memory.db) → createSettings(store.db)
 //   → createMirror(memoryDir, lang) → createService({store, mirror, config, logger})
 //   → service.recoverMirror()
-// 已核对签名（2026-09-28，lib 实测）：
+// 已核对签名（lib 实测）：
 //   createMirror(dir, language = "zh")              → { filePath, sync, readHumanEdits }
 //   createService({store, mirror, config, logger, …}) —— documentIndex/writeAdmission
-//     不传安全：内部全走 if-guard（service.js L1257/L1829）
+//     不传安全：内部全走 if-guard
 //   saveWithDedupe(memory) → { action: "created"|"merged", memory }（拒绝 type:"document"）
 //   service.search(q, {limit})   同步关键词（store.search 透传）
 //   service.searchMemories(q, {mode, topK, useRerank}) 异步混合检索
@@ -34,9 +34,9 @@ export class McBadRequest extends Error {
  */
 export async function createEmbeddedBackend(mnemeCfg) {
   let { libPath, dataDir } = mnemeCfg;
-  // v0.6.1：/memory/context 组装端是否排除 sensitivity 标注条目（上游 #363 安全建议，默认排除）
+  // /memory/context 组装端是否排除 sensitivity 标注条目（默认排除）
   const ctxExcludeSensitive = mnemeCfg.contextExcludeSensitive !== false;
-  // v0.5.40（开源化）：配置留空时自动探测常见安装位置——
+  // 配置留空时自动探测常见安装位置——
   //   libPath：DSH 默认 $DSH_HOME 或 ~/.dsh 下的 profiles/web/node_modules/@modusensus/dsh-mneme/lib
   //   dataDir：同一 DSH_HOME 下的 memory 目录
   const os = await import("node:os");
@@ -56,7 +56,7 @@ export async function createEmbeddedBackend(mnemeCfg) {
   if (!libPath || !dataDir) {
     throw new Error("embedded 模式需要 mneme.libPath 与 mneme.dataDir：自动探测失败（DSH 未安装或装在非常规位置）。请在 config.json 的 mneme 段手工填写，或改用 remote 模式（README「配置」）。");
   }
-  // v0.6.1（上游 #363 建议）：版本门控——lib/ 是 src 同步产物，内部签名无稳定性契约，
+  // 版本门控——lib/ 是 src 同步产物，内部签名无稳定性契约，
   // 行号级耦合每次发版都可能断。读安装包 package.json，超出已验证区间（allowedLibRange，
   // 默认 "^0.8"）明确拒绝启动，提示升级 bridge 或显式放宽区间。
   // 区间语法（自实现，不引依赖）：^MAJOR.MINOR = major 相同且 minor ≥ MINOR。
@@ -107,14 +107,14 @@ export async function createEmbeddedBackend(mnemeCfg) {
   }
 
   const dbPath = join(dataDir, "memory.db");
-  // index.js L195：先 mkdir 再开库——目录不存在时 node:sqlite 直接抛。
+  // 先 mkdir 再开库——目录不存在时 node:sqlite 直接抛。
   // dataDir 自动探测指向 $DSH_HOME/memory（或 ~/.dsh/memory），junction 上 mkdirSync 是幂等 no-op。
   mkdirSync(dataDir, { recursive: true });
 
   const store = mod.store.createStore(dbPath);
   // createSettings(db)：用户偏好（profile/rules/panel）与记忆表同库不同表。
-  // v0.2 起捕获返回值：/memory/context 组合路由要读 getProfile()/getRules()
-  // （settings.js L331/L339：profile 未设置时返回 ""，rules 容错解析返回 string[]）。
+  // 捕获返回值：/memory/context 组合路由要读 getProfile()/getRules()
+  // （profile 未设置时返回 ""，rules 容错解析返回 string[]）。
   const settings = mod.settings.createSettings(store.db);
 
   // mirror：设计文档 §3 与 index.js L255 一致，镜像目录 = memoryDir 本身——
@@ -150,14 +150,14 @@ export async function createEmbeddedBackend(mnemeCfg) {
 
   // mneme save 允许的字段白名单：多余键（扩展侧手滑多传的）直接丢掉，
   // 不给 mneme 内部 schema 校验添乱。type:"document" 被 saveWithDedupe 硬拒
-  // （service.js L1140），提前拦下给出友好 400 而不是内部错误。
+  // ，提前拦下给出友好 400 而不是内部错误。
   const SAVE_FIELDS = ["type", "title", "content", "importance", "tags", "source", "sensitivity", "occurred_at", "agent_scope", "workspace_scope"];
   const TYPE_RE = /^(preference|project|decision|history|rejected_solution|pitfall|constraint)$/;
 
   return {
     backend: "embedded",
 
-    // v0.3：蒸馏器需要直查库（按 tags 读待蒸馏/写状态标记）。
+    // 蒸馏器需要直查库（按 tags 读待蒸馏/写状态标记）。
     store,
 
     /** embedded 永远健康（服务就在本进程）；接口对齐 remote.health。 */
@@ -201,14 +201,20 @@ export async function createEmbeddedBackend(mnemeCfg) {
     /**
      * 搜索：优先 searchMemories（混合检索；无 embedder 时内部自动退化关键词），
      * 失败再退化到同步 service.search——与 mneme standalone /search 的两级
-     * 容错同构（api-standalone.js L515-528）。返回 {status, json:{items, mode}}。
+     * 容错同构。返回 {status, json:{items, mode}}。
      */
-    async search(q, { mode = "auto", topK = 5 } = {}) {
+    async search(q, { mode = "auto", topK = 5, agentScope = undefined, workspaceScope = undefined } = {}) {
       const query = String(q ?? "").trim();
       if (!query) return { status: 200, json: { items: [], mode: "keyword" } };
+      // scope 透传——searchMemories 的 scope 选项形状
+      // {agent_scope, workspace_scope}，只在显式传入时生效（A2 软加权 / strictScope
+      // 硬过滤均由 lib 内部处理）；不传与旧行为逐字节一致。
+      const scope = (agentScope !== undefined || workspaceScope !== undefined)
+        ? { agent_scope: agentScope ?? null, workspace_scope: workspaceScope ?? null }
+        : null;
       try {
         const rows = await Promise.resolve(
-          service.searchMemories(query, { mode, topK, useRerank: true })
+          service.searchMemories(query, { mode, topK, useRerank: true, scope })
         );
         const used = rows.some((m) => m.vector === true) ? "vector" : "keyword";
         return { status: 200, json: { items: service.toApiList(rows), mode: used } };
@@ -220,7 +226,7 @@ export async function createEmbeddedBackend(mnemeCfg) {
 
     /**
      * 最近列表：GET /memories?order=chrono 同语义——store.list 的 order:"chrono"
-     * 即 updated_at DESC（store.js L1448），用 toApiList 裁剪出 REST 同形 DTO。
+     * 即 updated_at DESC（store.js），用 toApiList 裁剪出 REST 同形 DTO。
      */
     async recent(limit) {
       const rows = service.list({ limit, order: "chrono" });
@@ -228,7 +234,7 @@ export async function createEmbeddedBackend(mnemeCfg) {
     },
 
     /**
-     * v0.5（面板增强②）：按类型/分组列出记忆。
+     * 按类型/分组列出记忆（面板用）。
      * type=单类型；types=逗号分隔多类型；limit/order 透传 store.list。
      */
     listByType({ type = null, types = null, limit = 50, order = "chrono" } = {}) {
@@ -282,29 +288,92 @@ export async function createEmbeddedBackend(mnemeCfg) {
     },
 
     /**
-     * 组合上下文（v0.2 /memory/context）：一次请求返回
+     * 组合上下文（/memory/context）：一次请求返回
      * { profile, rules, pins, related }——画像 + 行为规则 + 高价值记忆 + 相关记忆。
      * 解决「网页端只有近期记忆、没有全局信息」：扩展首开页面时调本路由即可
      * 拿到完整上下文，不用自己拼四个请求。
      */
     async context(q, topK) {
-      // profile：用户自述（settings.js L331，未设置返回 ""）
-      const query = String(q ?? "").trim();   // v0.5.28：提前声明（pins 场景匹配也要用）
+      // 优先走宿主注入管线 service.injectCandidates——端点全语义（优先级分层 /
+      // pin 前置 / 质量加权 / coding 门控）。降级路径（旧 lib / 端点失败 /
+      // contextSource="heuristic"）为朴素身份记忆直查（preference/constraint 且 importance>=4）。
+      // bridge 侧职责保留：sensitivity 过滤 + 元记忆过滤 + 4 字段瘦身 + pins/related
+      // 兼容形状（前 pinsLimit 条 → pins，其余 → related，上游已排好序）。
+      // config.mneme.contextSource: "auto"（默认）| "endpoint"（仅端点，失败即错）|
+      // "heuristic"（跳过端点直接走降级直查）。injectCandidates 缺失（<0.8.14 的 lib）
+      // 一律视为降级条件。
+      const ctxSource = mnemeCfg.contextSource === "heuristic" ? "heuristic"
+        : mnemeCfg.contextSource === "endpoint" ? "endpoint" : "auto";
+      if (ctxSource !== "heuristic" && typeof service.injectCandidates === "function") {
+        try {
+          const query = String(q ?? "").trim();
+          const pinnedStats = {};
+          const items = service.toApiList(service.injectCandidates({
+            query,
+            maxItems: topK + pinsLimit,   // 上游一次给足；bridge 侧再切 pins/related
+            threshold: 3                  // importance 阈值（injectCandidates 语义）
+          }));
+          if (Array.isArray(items)) {
+            const exclSens = mnemeCfg.contextExcludeSensitive !== false;
+            const isMeta = (t, tagsField) => {
+              let tags = tagsField;
+              if (typeof tags === "string") { try { tags = JSON.parse(tags); } catch { tags = []; } }
+              if (Array.isArray(tags) && (tags.includes("meta") || tags.includes("self_referential"))) return true;
+              return /^(v?\d+\.\d+|bridge|mneme[- ]?(bridge|edge)|扩展\s?0|0\.5\.\d)/i.test(String(t || ""));
+            };
+            const slimE = (arr) => (Array.isArray(arr) ? arr : [])
+              .filter((m) => (!exclSens || m.sensitivity === undefined || m.sensitivity === null || m.sensitivity === "") && !isMeta(m.title, m.tags))
+              .map((m) => ({
+                title: m.title,
+                content: m.content != null ? String(m.content).slice(0, 160) : "",
+                importance: m.importance,
+                type: m.type
+              }));
+            const all = slimE(items);
+            let profileE = "";
+            try { profileE = typeof settings.getProfile() === "string" ? settings.getProfile() : ""; } catch { /* 降级空串 */ }
+            let rulesE = [];
+            try {
+              const raw = settings.getRules();
+              rulesE = Array.isArray(raw) ? raw.filter((r) => typeof r === "string") : [];
+            } catch { /* 同上 */ }
+            log.info("context-via-injectCandidates", { total: all.length, pins: Math.min(all.length, pinsLimit) });
+            return {
+              status: 200,
+              json: {
+                profile: profileE,
+                rules: rulesE,
+                pins: all.slice(0, pinsLimit),
+                related: all.slice(pinsLimit)
+              },
+              via: "endpoint"
+            };
+          }
+          if (ctxSource === "endpoint") throw new Error("injectCandidates returned non-array");
+          log.warn("context-injectCandidates-degrade", { itemsType: typeof items });
+        } catch (err) {
+          if (ctxSource === "endpoint") throw err;
+          log.warn("context-injectCandidates-error", { msg: String(err?.message ?? err) });
+          // 落入下方降级主体
+        }
+      } else if (ctxSource === "endpoint") {
+        throw new Error("contextSource=endpoint requires mneme lib >= 0.8.14 (service.injectCandidates missing)");
+      }
+      // profile：用户自述（settings.getProfile，未设置返回 ""）
+      const query = String(q ?? "").trim();
       let profile = "";
       try {
         profile = typeof settings.getProfile() === "string" ? settings.getProfile() : "";
       } catch { /* settings 表异常不阻断聚合，降级空串 */ }
-      // rules：行为规则（settings.js L339，容错解析，恒 string[]）
+      // rules：行为规则（settings.getRules 容错解析，恒 string[]）
       let rules = [];
       try {
         const raw = settings.getRules();
         rules = Array.isArray(raw) ? raw.filter((r) => typeof r === "string") : [];
       } catch { /* 同上降级空数组 */ }
 
-      // v0.5.12（用户裁决）：pins 语义改为「关于我」——新会话开场 DS 应知道的是
-      // 用户画像级记忆（偏好/约束），不是最近在做的项目。两级取材：
-      //   第一级：preference/constraint 且 importance>=4（身份记忆，按重要度+时间）
-      //   第二级：不足 pinsLimit 再补 importance=5 的其他类型（项目里程碑等，排后）
+      // 降级直查 pins：preference/constraint 且 importance>=4，按重要度排序，
+      // 宁缺毋滥；profile 兜底「我是谁」，related 仍按话题检索。
       let pins = [];
       try {
         const seen = new Set();
@@ -312,50 +381,18 @@ export async function createEmbeddedBackend(mnemeCfg) {
           for (const r of service.toApiList(rows)) {
             if (pins.length >= pinsLimit) break;
             if (seen.has(r.title)) continue;
-            if (ctxExcludeSensitive && r.sensitivity !== undefined && r.sensitivity !== null && r.sensitivity !== "") continue;   // v0.6.1
+            if (ctxExcludeSensitive && r.sensitivity !== undefined && r.sensitivity !== null && r.sensitivity !== "") continue;
             seen.add(r.title);
             pins.push(r);
           }
         };
         // 分类型直查（store.list 的 type 参数是单值）：preference/constraint 各取一批。
-        // v0.5.24（用户裁决）：现在 profile 已承载"我是谁"，pins 改收「通用交互偏好」——
-        // 即聊天/语气/输出格式类偏好（如"聊天要简短""不要AI腔"），排除项目协作类
-        // （简历/设定/提示词工程/调试规矩——这些只在相关话题时经 related 出现）。
-        // 判别：title 或 content 含交互词（聊天/语气/称呼/简短/格式/排版/说/答）且
-        // 不含项目词（简历/设定/提示词/教案/论文/推演/调试/导入/UI/DSH）。
-        // 白名单点名式（v0.5.24b）：黑名单总有漏网（发言稿/文献/讲课），反转为只认
-        // 日常对话交互类关键词——宁缺毋滥，命中不足就少给几条，画廊由 profile 兜底。
-        // v0.5.24d：title 命中即收（title 是蒸馏器起的主题句，最可靠）；content 不参与
-        // 匹配——正文常提"论文/讲"等词导致误杀（如「聊天要求简短，不要长篇大论」正文含"论文"）。
-        const INTERACT = /(聊天|简短|AI腔|AI 味|口语化|称呼|错别字|音近错字|纠错|歌词|波浪号|唱歌|说话|语气|长篇大论|音译|直译)/;
-        const PROJECTISH = /(简历|设定|提示词|教案|跑团|人格|量表|检索|考古|推演|调试|导入|DSH|版本|发言稿|文献|论文|综述|答辩|课|改写|翻译)/;
-        // v0.5.28：pins 场景匹配——交互偏好分「全场通用」与「场景专属」两类。
-        // 通用（聊天简短/口语化/称呼/纠错）无条件注入；场景专属（文书语气→写文书时、
-        // 唱歌歌词→点歌时）只在 query 触及对应场景才注入，否则是噪音（用户实测指出）。
-        const SCENE = [
-          { re: /文书|个人陈述|自我介绍|简历|求职信|申请|面试/, pin: /文书|AI味|AI 腔|陈述/ },
-          { re: /唱歌|歌词|唱一|点歌|来一首|唱首/, pin: /歌词|波浪号|唱歌/ },
-        ];
         for (const t of ["preference", "constraint"]) {
           try {
-            const rows = service.list({ type: t, limit: 150, order: "importance", minImportance: 3 })
-              .filter((r) => {
-                const title = r.title || "";
-                return INTERACT.test(title) && !PROJECTISH.test(title);
-              })
-              .sort((a, b) => (b.importance || 0) - (a.importance || 0));
+            const rows = service.list({ type: t, limit: 150, order: "importance", minImportance: 4 });
             push(rows);
           } catch (e) { /* 单类失败不拖垮 */ }
         }
-        // 场景过滤收口：query 未触及场景的专属 pin 移除
-        for (const s of SCENE) {
-          if (!s.re.test(query)) {
-            pins = pins.filter((p) => !s.pin.test(p.title || ""));
-          }
-        }
-        // v0.5.24c：第二级（其他类型 imp5 补位）整体移除——画像已承载身份信息，
-        // 项目里程碑/医学案例塞进新会话开场只会重演"注入无关记忆"。宁缺毋滥，
-        // 交互偏好命中几条给几条，不足就让 pins 为空（related 仍按话题检索）。
       } catch (err) {
         log.warn("context-pins-failed", { msg: String(err) });
       }
@@ -363,10 +400,10 @@ export async function createEmbeddedBackend(mnemeCfg) {
       // related：相关记忆。q 为空串直接跳过搜索（mneme /search 对空 q 也回空）；
       // searchMemories 任何失败（向量/重排链路）退化为空数组——聚合路由的子项
       // 失败不该拖垮整体响应。
-      // v0.5.31：related 排除「元记忆」——mneme/DSH 开发过程记录（tags 含 meta/
+      // related 排除「元记忆」——mneme/DSH 开发过程记录（tags 含 meta/
       // self_referential，或 title 是版本号/修复报告形态）属于工具自身的演进日志，
-      // 对网页端任何聊天都是噪音（"你好呀"召回 5 条开发记录的事故）。
-      // 判别：tags 含 meta/self_referential，或 title 以 v0./0.5./bridge 等版本形态开头。
+      // 对网页端任何聊天都是噪音。
+      // 判别：tags 含 meta/self_referential，或 title 以版本号/bridge 形态开头。
             const isMeta = (t, tagsField) => {
         // tags 兼容两种形态：数组（service 原始行）与 JSON 字符串（API DTO）
         let tags = tagsField;
@@ -374,7 +411,7 @@ export async function createEmbeddedBackend(mnemeCfg) {
         if (Array.isArray(tags) && (tags.includes("meta") || tags.includes("self_referential"))) return true;
         return /^(v?\d+\.\d+|bridge|mneme[- ]?(bridge|edge)|扩展\s?0|0\.5\.\d)/i.test(String(t || ""));
       };
-      // v0.6.1（上游 #363 安全建议）：sensitivity 标注的记忆不随注入出境（sensitivity 在
+      // sensitivity 标注的记忆不随注入出境（sensitivity 在
       // mneme 侧只是标签、不参与可见性；context 组装端默认排除，config.contextExcludeSensitive 可关）。
       const exclSens = ctxExcludeSensitive !== false;   // 默认 true
       const notSensitive = (r) => !exclSens || r.sensitivity === undefined || r.sensitivity === null || r.sensitivity === "";
@@ -386,7 +423,7 @@ export async function createEmbeddedBackend(mnemeCfg) {
           const rows = await Promise.resolve(
             service.searchMemories(query, { mode: "auto", topK: topK * 2, useRerank: true })
           );
-          related = relatedFilter(service.toApiList(rows)).slice(0, topK);   // v0.5.31：先扩招再滤元记忆
+          related = relatedFilter(service.toApiList(rows)).slice(0, topK);   // 先扩招再滤元记忆
         } catch {
           try {
             // 关键词兜底再失败才真给 []：与 search 路由的两级容错同构
@@ -395,18 +432,17 @@ export async function createEmbeddedBackend(mnemeCfg) {
         }
       }
 
-      // v0.5.27：关键词直查补路——语义检索对自然语言问句（"…是一个什么样的朝代？"）打分
-      // 失焦，专名命中（如"凉朝"22 条）被通用偏好挤出 topK。做法：query 按 2-4 字滑窗抽词，
+      // 关键词直查补路——语义检索对自然语言问句打分失焦，专名命中会被通用偏好挤出 topK。
+      // 做法：query 按 2-4 字滑窗抽词，
       // 每个词用 keyword 检索计命中数，选命中最多的词补一轮检索并入 related（去重）。
       try {
-        // 停用词只做「整词相等」判断（此前用前缀 test，把"你觉得凉朝…"整句丢掉了）
+        // 停用词只做「整词相等」判断（前缀匹配会把整句误丢）
         const STOPW = new Set(["什么是", "一个", "什么样", "怎么样", "还是", "然后", "可以", "我们",
           "你们", "我觉得", "你觉得", "请问", "帮我", "继续", "以及", "而且", "但是", "如果",
           "现在", "这个", "那个", "到底", "究竟", "关于", "为什么", "怎么", "如何", "应该",
           "没有", "有的", "是不是", "有没有", "一下", "一些", "什么", "怎么", "思考", "感觉",
           "时候", "空间", "地方", "方面", "问题", "其实", "确实", "可能", "就是", "不是"]);
-        // v0.5.31：寒暄检测——纯问候（你好/嗨/hello/在吗…，≤6 字）没有话题，
-        // 不做关键词补路（此前「你好呀」boost 命中"你好"字样，召回的全是 mneme 开发元记忆）。
+        // 寒暄检测——纯问候（你好/嗨/hello/在吗…，≤6 字）没有话题，不做关键词补路。
         const GREETING = /^(你好|您好|哈喽|嗨|hello|hi|hiya|在吗|早上好|下午好|晚上好|早安|晚安|你好呀|大家好|喂)[呀啊哈呗呢～~！!。.？?]*/i;
         const isGreeting = query.length <= 6 && GREETING.test(query.trim());
         const segs = isGreeting ? [] : String(query || "").replace(/[？?！!，,。.、\s]+/g, " ").split(" ").filter((s) => s.length >= 2);
@@ -429,8 +465,7 @@ export async function createEmbeddedBackend(mnemeCfg) {
           let n = 0;
           try { n = (service.search(w, { limit: 30 }) || []).length; } catch { n = 0; }
           tally.push(w + "=" + n);
-          // v0.5.30（用户裁决：>25 硬排除一刀切，话题记忆涨多后会永久失明）：
-          // 改为「全库占比」判别 + 多词投票。命中数占全库 >15% 的是万能词（"没有"）排除；
+          // 「全库占比」判别：命中数占全库 >15% 的是万能词（如"没有"）排除；
           // 其余按 (命中数 × 词长) 打分（长词信息量高），取前 3 词各自召回后合并。
           if (totalMems > 0 && n / totalMems > 0.15) continue;
           if (n >= 3) {
@@ -440,8 +475,7 @@ export async function createEmbeddedBackend(mnemeCfg) {
           }
         }
         log.info("context-kw-tally", { top: tally.sort((a, b) => Number(b.split("=")[1]) - Number(a.split("=")[1])).slice(0, 6) });
-        // v0.5.30：多词投票——top 前置词各召回一轮合并置顶（凉朝 22 条 + 科举 13 条都能进），
-        // 每词配额 ceil(topK/词数) 防止首个词独占。
+        // 多词投票——top 前置词各召回一轮合并置顶，每词配额 ceil(topK/词数) 防止首个词独占。
         top.sort((a, b) => b.sc - a.sc);
         const words = top.slice(0, 3);
         if (words.length) {

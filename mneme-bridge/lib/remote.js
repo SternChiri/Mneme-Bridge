@@ -91,9 +91,15 @@ export function createRemoteBackend(mnemeCfg) {
       return call("/memories", { method: "POST", body: memory });
     },
 
-    /** 搜索：GET /search?q&mode&topK。 */
-    async search(q, { mode = "auto", topK = 5 } = {}) {
-      return call("/search", { query: { q, mode, topK } });
+    /**
+     * 搜索：GET /search?q&mode&topK。可选透传 agent_scope/workspace_scope
+     * （0.8.14 起 /search 支持 scope 参数；两参全缺行为与既往逐字节一致）。
+     */
+    async search(q, { mode = "auto", topK = 5, agentScope = undefined, workspaceScope = undefined } = {}) {
+      const query = { q, mode, topK };
+      if (agentScope !== undefined) query.agent_scope = agentScope;
+      if (workspaceScope !== undefined) query.workspace_scope = workspaceScope;
+      return call("/search", { query });
     },
 
     /** 最近列表：GET /memories?order=chrono&limit=N（chrono = updated_at DESC）。 */
@@ -101,7 +107,7 @@ export function createRemoteBackend(mnemeCfg) {
       return call("/memories", { query: { order: "chrono", limit } });
     },
 
-    /** v0.5（面板增强②）：按类型列出——remote 模式代理 mneme GET /memories?type=X。 */
+    /** 按类型列出——remote 模式代理 mneme GET /memories?type=X。 */
     async listByType({ type = null, types = null, limit = 50, order = "chrono" } = {}) {
       const q = { order, limit };
       if (type) q.type = type;
@@ -115,14 +121,20 @@ export function createRemoteBackend(mnemeCfg) {
     },
 
     /**
-     * 组合上下文（v0.2 /memory/context）：remote 模式下代理组装 mneme 的四个
-     * 上游端点（/profile、/rules、/memories?minImportance=5、/search），
-     * 与 embedded 同口径返回 { profile, rules, pins, related }。
-     * 任一子端点失败按空值降级（profile ""/rules []/pins []/related []）——
-     * 聚合路由的子项失败不拖垮整体，语义对齐 embedded 的 try/catch 降级。
+     * 组合上下文 /memory/context：优先走 mneme ≥0.8.14 的 GET /context 端点。
+     * 端点路径：GET /context?q&topK&threshold（宿主注入管线全语义——优先级分层 /
+     * pin 前置 / 质量加权 / coding 门控），返回 {profile, rules, items, pinnedCount}。
+     * bridge 侧职责：sensitivity 过滤 + 元记忆过滤 + 4 字段瘦身 +
+     * 兼容形状映射（items 前 pinsLimit 条 → pins，其余 → related；上游已排好序）。
+     * 降级路径：上游 404（<0.8.14）/ 网络失败 / 响应形状不对 → 走四路并发拼装
+     * （/profile /rules /memories /search）；pins 降级为朴素身份
+     * 直查（preference/constraint 且 importance>=4，与 embedded 降级同口径）。
+     * 任一路径的子项失败按空值降级；网络层失败（UpstreamError）照旧向上抛 502。
+     * config.mneme.contextSource: "auto"（默认，先端点后降级）| "endpoint"（只用端点，
+     * 失败报 502/503）| "heuristic"（只用四路拼装，跳过端点）。
      */
     async context(q, topK) {
-      // v0.6.1（上游 #363 安全建议）：sensitivity 标注条目默认不进注入出境（config.mneme.contextExcludeSensitive 可关）
+      // sensitivity 标注条目默认不进注入出境（config.mneme.contextExcludeSensitive 可关）
       const exclSens = mnemeCfg.contextExcludeSensitive !== false;
       const slim = (items) => (Array.isArray(items) ? items : [])
         .filter((m) => !exclSens || m.sensitivity === undefined || m.sensitivity === null || m.sensitivity === "")
@@ -133,12 +145,56 @@ export function createRemoteBackend(mnemeCfg) {
         type: m.type
       }));
 
-      // 四路并发：独立端点无依赖，串行只会白加延迟
+      const source = mnemeCfg.contextSource === "heuristic" ? "heuristic" : "auto";
+      if (source !== "heuristic") {
+        try {
+          const r = await call("/context", {
+            query: {
+              ...(String(q ?? "").trim() ? { q: String(q).trim() } : {}),
+              topK,
+              threshold: 3
+            }
+          });
+          if (r.status === 200 && r.json && typeof r.json.profile === "string" && Array.isArray(r.json.items)) {
+            // 元记忆过滤沿用 embedded 口径：tags 含 meta/self_referential 或版本号形态 title
+            const isMeta = (t, tagsField) => {
+              let tags = tagsField;
+              if (typeof tags === "string") { try { tags = JSON.parse(tags); } catch { tags = []; } }
+              if (Array.isArray(tags) && (tags.includes("meta") || tags.includes("self_referential"))) return true;
+              return /^(v?\d+\.\d+|bridge|mneme[- ]?(bridge|edge)|扩展\s?0|0\.5\.\d)/i.test(String(t || ""));
+            };
+            const all = slim(r.json.items).filter((m) => !isMeta(m.title, m.tags));
+            return {
+              status: 200,
+              json: {
+                profile: r.json.profile,
+                rules: Array.isArray(r.json.rules) ? r.json.rules.filter((x) => typeof x === "string") : [],
+                pins: all.slice(0, pinsLimit),
+                related: all.slice(pinsLimit)
+              },
+              via: "endpoint"
+            };
+          }
+          // 404 = 老 mneme 无端点 → 降级；其他非 200 也降级（endpoint-only 时透传）
+          if (mnemeCfg.contextSource === "endpoint") {
+            return { status: r.status === 404 ? 503 : r.status, json: { error: r.status === 404 ? "context-endpoint-unavailable" : (r.json?.error ?? "upstream-error") } };
+          }
+          log.warn("context-endpoint-degrade", { status: r.status });
+        } catch (err) {
+          if (mnemeCfg.contextSource === "endpoint") throw err;
+          if (!(err instanceof UpstreamError)) log.warn("context-endpoint-error", { msg: String(err?.message ?? err) });
+          // UpstreamError（网络不可达）继续往下走四路拼装也会失败——但保持既有语义：
+          // 四路里同样抛 UpstreamError → 502，行为一致。此处吞掉让降级路径统一处理。
+        }
+      }
+
+      // ---- 降级/直连：四路并发拼装 ----
       const [profileRes, rulesRes, pinsRes, relatedRes] = await Promise.allSettled([
         call("/profile"),
         call("/rules"),
-        call("/memories", { query: { minImportance: 5, limit: pinsLimit, order: "chrono" } }),
-        // q 空串不打上游（embedded 同口径）；非空走 /search
+        // 降级 pins 与 embedded 直查同口径：preference/constraint 且 importance>=4
+        // （按重要度），bridge 侧过滤类型。
+        call("/memories", { query: { minImportance: 4, limit: 150, order: "importance" } }),
         String(q ?? "").trim()
           ? call("/search", { query: { q: String(q).trim(), mode: "auto", topK } })
           : Promise.resolve({ status: 200, json: { items: [] } })
@@ -146,7 +202,6 @@ export function createRemoteBackend(mnemeCfg) {
 
       const pick = (settled, path) => {
         if (settled.status !== "fulfilled") {
-          // 网络层失败（UpstreamError）要往上抛：整路由 502 的语义不能被子项吞掉
           if (settled.reason instanceof UpstreamError) throw settled.reason;
           log.warn("context-subcall-failed", { path });
           return null;
@@ -163,12 +218,14 @@ export function createRemoteBackend(mnemeCfg) {
         json: {
           profile: typeof profileR?.json?.profile === "string" ? profileR.json.profile : "",
           rules: Array.isArray(rulesR?.json?.rules) ? rulesR.json.rules.filter((r) => typeof r === "string") : [],
-          pins: slim(pinsR?.json?.items),
+          pins: slim(pinsR?.json?.items)
+            .filter((m) => m.type === "preference" || m.type === "constraint")
+            .slice(0, pinsLimit),
           related: slim(relatedR?.json?.items)
-        }
+        },
+        via: "heuristic"
       };
     },
-
     /** 进程收尾钩子（remote 无持久资源，空实现；接口对齐 embedded.close）。 */
     async close() {
       log.debug("remote-close", {});

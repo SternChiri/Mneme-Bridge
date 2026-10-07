@@ -13,6 +13,7 @@
     "contextPinsLimit": 5,
     "contextRelatedTopK": 6,
     "contextExcludeSensitive": true,
+    "contextSource": "auto",
     "allowedLibRange": "^0.8"
   },
   "conversation": {

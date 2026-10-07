@@ -44,13 +44,16 @@ function defaults() {
       probeTimeoutMs: 1000,
       // 上游请求超时（ms）：设计文档 §4 用 10s
       requestTimeoutMs: 10000,
-      // GET /memory/context 组合路由（v0.2）：pins 取 importance>=5 的高价值
-      // 记忆条数上限；related 搜索默认条数（query 未带 topK 时生效）。
-      // loadOrCreateConfig 的浅合并保证老配置文件缺这两个键时自动补默认值。
+      // GET /memory/context：pins 条数上限与 related 搜索默认条数
+      // （query 未带 topK 时生效）。loadOrCreateConfig 的浅合并保证老配置
+      // 文件缺这两个键时自动补默认值。
       contextPinsLimit: 5,
-      // v0.6.1：/memory/context 是否排除 sensitivity 标注记忆（上游 #363：注入出境默认不带敏感条目）
+      // /memory/context 是否排除 sensitivity 标注记忆（注入出境默认不带敏感条目）
       contextExcludeSensitive: true,
-      // v0.6.1：embedded 模式 mneme lib 版本门控（上游 #363：lib 内部签名无稳定性契约）。
+      // /memory/context 数据源——"auto"（默认：优先 mneme ≥0.8.14 注入管线端点，
+      // 失败降级自建启发式）| "endpoint"（仅端点，失败即错）| "heuristic"（仅自建启发式）。
+      contextSource: "auto",
+      // embedded 模式 mneme lib 版本门控（lib 内部签名无稳定性契约）。
       // 语法 ^MAJOR.MINOR：major 相同且 minor ≥ 该值即放行；空串 = 关闭校验。
       allowedLibRange: "^0.8",
       contextRelatedTopK: 6
@@ -59,15 +62,15 @@ function defaults() {
     conversation: {
       capacity: 500
     },
-    // v0.4 导入闸（task-9）：单批导入的字符预算。/memory/import/estimate 按同
-    // 口径给预估数，/memory/import 落库前最后确认——超限返回 400 too-large 让
-    // 扩展回 L1 减勾选，绝不静默截断（用户在 L3 确认过预算，数字必须真实）。
+    // 导入字符闸：单批导入的字符预算。/memory/import/estimate 按同口径给
+    // 预估数，/memory/import 落库前最后确认——超限返回 400 too-large 让扩展
+    // 回上一级减勾选，绝不静默截断（确认过的预算，数字必须真实）。
     import: {
       maxImportChars: 1500000
     },
-    // v0.3 对话蒸馏器：缓冲的网页对话由 DSH headless 批量总结后入库（B 路线）。
-    // 全自动触发：dsh-probe 每 probeIntervalMs 探测 DSH Web 端口，离线→在线跳变
-    // 且有缓冲时执行一轮；DSH 不在时静默缓冲（用户需求：零人工）。
+    // 对话蒸馏器：缓冲的网页对话由 DSH headless 批量总结后入库。
+    // 全自动触发：dsh-probe 每 probeIntervalMs 检查缓冲队列，有积压即执行
+    // 一轮；DSH 不在时静默缓冲（零人工）。
     distill: {
       // false = 完全关闭蒸馏器（探测也不跑）
       enabled: true,
@@ -82,7 +85,7 @@ function defaults() {
       // 单轮最多取多少条待蒸馏对话（防止首轮积压过大）
       batchLimit: 60
     },
-    // v0.6.2（task-12）：DSH headless 蒸馏会话清理器。蒸馏每跑一轮，DSH 都会
+    // DSH headless 蒸馏会话清理器：蒸馏每跑一轮，DSH 都会
     // 留一个单轮残留会话；清理器在每轮蒸馏结束后移除它们（也走
     // POST /maintenance/purge-headless-sessions 手动触发）。
     sessionCleanup: {

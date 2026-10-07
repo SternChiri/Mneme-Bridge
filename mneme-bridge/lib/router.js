@@ -14,7 +14,7 @@ const log = loggerFor("router");
  * 创建请求处理器。
  * @param {object} opts
  * @param {string}   opts.bridgeToken   bridge 鉴权 token
- * @param {object}   opts.backend       remote/embedded 后端（六方法接口面，v0.2 加 context）
+ * @param {object}   opts.backend       remote/embedded 后端（六方法接口面，含 context）
  * @param {Function} opts.conversation  对话入库处理器
  * @param {() => number} opts.startedAt 进程启动时刻（Date.now()）
  * @param {{pinsLimit: number, relatedTopK: number}} [opts.contextCfg]
@@ -118,8 +118,12 @@ export function createRequestHandler({ bridgeToken, backend, conversation, buffe
       }
       const mode = typeof body?.mode === "string" && body.mode ? body.mode : "auto";
       const topK = Number.isInteger(body?.topK) && body.topK > 0 && body.topK <= 50 ? body.topK : 5;
+      // scope 可选透传——字符串一维即生效，全缺 = 不解析
+      //（与上游 /search 的 agent_scope/workspace_scope 语义一致，fail-closed 由 lib 处理）
+      const agentScope = typeof body?.agentScope === "string" && body.agentScope ? body.agentScope : undefined;
+      const workspaceScope = typeof body?.workspaceScope === "string" && body.workspaceScope ? body.workspaceScope : undefined;
       try {
-        const r = await backend.search(q, { mode, topK });
+        const r = await backend.search(q, { mode, topK, agentScope, workspaceScope });
         sendJson(res, r.status, r.json);
       } catch (err) {
         if (handleUpstream(err, res)) return;
@@ -141,7 +145,7 @@ export function createRequestHandler({ bridgeToken, backend, conversation, buffe
       return;
     }
 
-    // ---- GET /memory/list（v0.5 面板增强②：按类型/分组列出记忆）-----------
+    // ---- GET /memory/list（按类型/分组列出记忆）-----------
     if (req.method === "GET" && pathname === "/memory/list") {
       const limit = intParam(url, "limit", 50, { min: 1, max: 200 });
       const type = url.searchParams.get("type") || null;
@@ -159,7 +163,7 @@ export function createRequestHandler({ bridgeToken, backend, conversation, buffe
       return;
     }
 
-    // ---- GET /memory/pending（v0.4.4：缓冲队列查看——待蒸馏条目，面板「记忆维护」用）
+    // ---- GET /memory/pending（缓冲队列查看——待蒸馏条目，面板「记忆维护」用）
     if (req.method === "GET" && pathname === "/memory/pending") {
       if (!bufferStore) { sendJson(res, 200, { items: [], total: 0 }); return; }
       const limit = intParam(url, "limit", 100, { min: 1, max: 500 });
@@ -182,7 +186,7 @@ export function createRequestHandler({ bridgeToken, backend, conversation, buffe
       return;
     }
 
-    // ---- DELETE /memory/pending?id=（v0.5.13：面板队列条目删除——蒸馏前人工把关）
+    // ---- DELETE /memory/pending?id=（面板队列条目删除——蒸馏前人工把关）
     if (req.method === "DELETE" && pathname === "/memory/pending") {
       const id = url.searchParams.get("id") || "";
       if (!bufferStore || !id) { sendJson(res, 400, { error: "id required" }); return; }
@@ -191,7 +195,7 @@ export function createRequestHandler({ bridgeToken, backend, conversation, buffe
       return;
     }
 
-    // ---- GET /memory/imported-ids（v0.5.17：已入库会话集合——导入列表隐藏已入库会话）
+    // ---- GET /memory/imported-ids（已入库会话集合——导入列表隐藏已入库会话）
     if (req.method === "GET" && pathname === "/memory/imported-ids") {
       if (!bufferStore) { sendJson(res, 200, { ids: [] }); return; }
       const ids = [...bufferStore.importedSessionIds()];
@@ -236,7 +240,7 @@ export function createRequestHandler({ bridgeToken, backend, conversation, buffe
       return;
     }
 
-    // ---- GET /memory/context（v0.2 组合路由）--------------------------------
+    // ---- GET /memory/context（组合路由）--------------------------------
     if (req.method === "GET" && pathname === "/memory/context") {
       // q 可空：空 = 只要 profile+rules+pins（首开页面场景），related 给 []
       const q = url.searchParams.get("q") ?? "";
@@ -244,7 +248,8 @@ export function createRequestHandler({ bridgeToken, backend, conversation, buffe
       const topK = intParam(url, "topK", ctxTopKDefault, { min: 1, max: 50 });
       try {
         const r = await backend.context(q, topK);
-        sendJson(res, r.status, r.json);
+        // 透传数据源标记（via: "endpoint" | "heuristic"），便于调试与 smoke 断言
+        sendJson(res, r.status, r.via !== undefined ? { ...r.json, via: r.via } : r.json);
       } catch (err) {
         // context 的子项失败在 backend 内部已降级；这里只剩网络层失败 → 502
         if (handleUpstream(err, res)) return;
@@ -253,7 +258,7 @@ export function createRequestHandler({ bridgeToken, backend, conversation, buffe
       return;
     }
 
-    // ---- POST /memory/distill：手动触发一轮蒸馏（v0.3.1，悬浮面板「立即蒸馏」）----
+    // ---- POST /memory/distill：手动触发一轮蒸馏（面板「立即蒸馏」）----
     if (req.method === "POST" && pathname === "/memory/distill") {
       if (!distiller) {
         // remote 模式下蒸馏器不可用（8790 无按 tags 查询能力）
@@ -261,7 +266,7 @@ export function createRequestHandler({ bridgeToken, backend, conversation, buffe
         return;
       }
       // 异步执行不占连接：蒸馏可能耗时数分钟（headless LLM），立即 202 回执
-      void distiller.runIfPending(true).then((result) => {   // v0.5.11：手动触发=强制全量（含活跃会话）
+      void distiller.runIfPending(true).then((result) => {   // 手动触发=强制全量（含活跃会话）
         log.info("distill-manual-done", { saved: result.saved ?? 0, skipped: result.skipped ?? "" });
       }).catch((err) => {
         log.warn("distill-manual-fail", { msg: String(err?.message ?? err).slice(0, 200) });
@@ -270,7 +275,7 @@ export function createRequestHandler({ bridgeToken, backend, conversation, buffe
       return;
     }
 
-    // ---- POST /memory/import：旧会话批量导入（v0.4，改进 3 的 bridge 侧）----
+    // ---- POST /memory/import：旧会话批量导入----
     if (req.method === "POST" && pathname === "/memory/import") {
       if (!importer) {
         sendJson(res, 503, { error: "importer-unavailable" });
@@ -289,7 +294,7 @@ export function createRequestHandler({ bridgeToken, backend, conversation, buffe
       return;
     }
 
-    // ---- POST /memory/import/estimate：导入预估器（v0.4，纯计算不落库）----
+    // ---- POST /memory/import/estimate：导入预估器（纯计算不落库）----
     if (req.method === "POST" && pathname === "/memory/import/estimate") {
       if (!estimator) {
         // 恒在（server.js 无条件创建）；防御式 503 保持与其他可选路由同款形状
@@ -309,7 +314,7 @@ export function createRequestHandler({ bridgeToken, backend, conversation, buffe
       return;
     }
 
-    // ---- POST /maintenance/purge-headless-sessions（v0.6.2，task-12）--------
+    // ---- POST /maintenance/purge-headless-sessions--------
     // 列出/清除 DSH 里本桥接器 headless 蒸馏留下的单轮残留会话。
     // body: {dryRun?:boolean}；dryRun=true 只列不删（dryRun 列表带目录路径）。
     // 鉴权同全局：Bearer bridgeToken。清理器内部四重闸（cwd 精确匹配 + 目录名/头帧

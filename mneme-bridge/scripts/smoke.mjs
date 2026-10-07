@@ -95,7 +95,7 @@ function summarize() {
  * 其余路径 404；除 /health 外 auth 必须是 "Bearer " + FAKE_MNEME_TOKEN，否则 401。
  */
 function startFakeMneme(port) {
-  const state = { saves: [], lastAuth: "", searches: [] };
+  const state = { saves: [], lastAuth: "", searches: [], contextEndpoint: false };
   const server = createServer((req, res) => {
     const url = new URL(req.url, "http://fake-mneme");
     const p = url.pathname;
@@ -120,8 +120,8 @@ function startFakeMneme(port) {
       if (req.method === "GET" && p === "/health") return reply(200, { ok: true });
       if (auth !== "Bearer " + FAKE_MNEME_TOKEN) return deny();
 
-      // v0.2 /memory/context 的上游桩：/profile /rules（形状对齐真 mneme，
-      // api-standalone.js L262/L268：{profile:""} / {rules:[]}）
+      // /memory/context 的上游桩：/profile /rules（形状对齐真 mneme，
+      // api-standalone.js：{profile:""} / {rules:[]}）
       if (req.method === "GET" && p === "/profile") {
         return reply(200, { profile: "fake-user-profile: 偏好中文回复，注重新鲜度" });
       }
@@ -139,7 +139,8 @@ function startFakeMneme(port) {
       if (req.method === "GET" && p === "/search") {
         const q = url.searchParams.get("q") ?? "";
         const mode = url.searchParams.get("mode") ?? "auto";
-        state.searches.push({ q, mode });
+        // 记录 scope 透传（agent_scope/workspace_scope 可选）
+        state.searches.push({ q, mode, agent_scope: url.searchParams.get("agent_scope"), workspace_scope: url.searchParams.get("workspace_scope") });
         if (q.startsWith("__slow__")) {
           // 打桩超时：3s > bridge 的 requestTimeoutMs(1s)，bridge 应中止并 502
           return setTimeout(() => reply(200, { items: [], mode }), 3000);
@@ -148,10 +149,11 @@ function startFakeMneme(port) {
       }
       if (req.method === "GET" && p === "/memories") {
         const limit = Number(url.searchParams.get("limit") ?? 50);
-        // v0.2：支持 minImportance 过滤（pins 桩）——>=5 的给高价值条目，
-        // 否则回退普通 recent 条目（importance 3）
+        // 支持 minImportance 过滤（pins 桩）——降级 pins 直查
+        // 口径为 importance>=4（身份记忆），桩同口径给高价值条目；否则回退普通
+        // recent 条目（importance 3）
         const minImp = url.searchParams.get("minImportance");
-        if (minImp !== null && Number(minImp) >= 5) {
+        if (minImp !== null && Number(minImp) >= 4) {
           const pins = Array.from({ length: Math.min(limit, 2) }, (_, i) => ({
             id: "p" + (i + 1), type: "preference", title: "pin-" + (i + 1),
             content: "pin-content-" + (i + 1),
@@ -169,6 +171,20 @@ function startFakeMneme(port) {
       }
       if (req.method === "GET" && p === "/status") {
         return reply(200, { version: "0.8.9", memories: { total: 42, byType: {} }, entities: 0, uptime_s: 1 });
+      }
+      // GET /context 端点桩（形状对齐 0.8.14 api-standalone.js）。默认 404，
+      // state.contextEndpoint = true 时返回注入管线形状——用于「优先端点」断言。
+      if (req.method === "GET" && p === "/context") {
+        if (!state.contextEndpoint) return reply(404, { error: "not-found" });
+        const q = (url.searchParams.get("q") ?? "").trim();
+        const topK = Number(url.searchParams.get("topK") ?? 5);
+        // 形状对齐真实 /context：items 按注入优先级排序——pin 前置，related 在后
+        const items = [
+          { id: "ctx-pin1", type: "preference", title: "endpoint-pin-1", content: "endpoint pin content 1", tags: [], importance: 5, source: "fake", created_at: "2026-03-02T00:00:00Z", updated_at: "2026-03-02T00:00:00Z" },
+          { id: "ctx-pin2", type: "constraint", title: "endpoint-pin-2", content: "endpoint pin content 2", tags: [], importance: 5, source: "fake", created_at: "2026-03-03T00:00:00Z", updated_at: "2026-03-03T00:00:00Z" }
+        ];
+        if (q) items.push({ id: "ctx-rel", type: "project", title: "endpoint-rel:" + q, content: "endpoint related hit", tags: [], importance: 4, source: "fake", created_at: "2026-03-01T00:00:00Z", updated_at: "2026-03-01T00:00:00Z" });
+        return reply(200, { profile: "fake-user-profile: 偏好中文回复，注重新鲜度", rules: ["fake-rule-1: 回答要短", "fake-rule-2: 引用给出处"], items, pinnedCount: 2 });
       }
       return reply(404, { error: "not-found" });
     });
@@ -243,7 +259,7 @@ async function main() {
     }
   }
 
-  // v0.4 断点续跑端到端要真跑蒸馏器：生成 fake-dsh 的 .cmd 包装（distiller 在
+  // 断点续跑端到端要真跑蒸馏器：生成 fake-dsh 的 .cmd 包装（distiller 在
   // win32 下 shell:true 单串拼接 spawn，.cmd 是它可执行的最小形态）。
   const fakeDshCmd = join(tmp, "fake-dsh.cmd");
   await writeFile(fakeDshCmd, "@echo off\nnode \"" + join(BRIDGE_DIR, "scripts", "fake-dsh.mjs").replace(/\\/g, "/") + "\"\n", "utf8");
@@ -259,11 +275,11 @@ async function main() {
   const cfgB = { ...baseCfg, bridgeToken: "bt-B-" + TAG, port: BB, host: "127.0.0.1", mneme: { mode: "remote", url: `http://127.0.0.1:${DEAD}`, token: FAKE_MNEME_TOKEN, requestTimeoutMs: 1000 } };
   const cfgC = {
     ...baseCfg, bridgeToken: "bt-C-" + TAG, port: BC, host: "127.0.0.1",
-    mneme: { mode: "embedded", libPath: "", dataDir: embedDir.replace(/\\/g, "/") },   // libPath 留空走自动探测（v0.5.40 开源化）
-    // v0.4 断点续跑端到端：蒸馏命令指向 fake-dsh 包装（秒回固定 JSON）；
+    mneme: { mode: "embedded", libPath: "", dataDir: embedDir.replace(/\\/g, "/"), contextSource: "heuristic" },   // libPath 留空自动探测；显式 heuristic 保住降级路径断言语境
+    // 断点续跑端到端：蒸馏命令指向 fake-dsh 包装（秒回固定 JSON）；
     // 探测拉长防误触发（dsh-probe 只在离线→在线跳变时触发，fake 端口恒离线）
     distill: { enabled: false, dshCommand: fakeDshCmd, headlessTimeoutMs: 30000 },
-    // v0.6.2（task-12）：蒸馏后清理的 DSH home 重定向到临时目录——smoke 绝不
+    // 蒸馏后清理的 DSH home 重定向到临时目录——smoke 绝不
     // 碰真实 ~/.dsh/sessions（与生产库零写红线同级的隔离纪律）
     sessionCleanup: { dshHome: join(tmp, "fake-dsh-home") }
   };
@@ -321,6 +337,17 @@ async function main() {
       const r = await http("POST", A.base + "/memory/search", { token: tA, body: { q: "smoke-query", mode: "auto", topK: 5 } });
       check("POST /memory/search → 200 items", r.status === 200 && Array.isArray(r.json?.items) && r.json.items[0]?.title === "hit:smoke-query", r.status + " " + r.text.slice(0, 160));
       check("search 透传 q/mode", fake.state.searches.at(-1)?.q === "smoke-query" && fake.state.searches.at(-1)?.mode === "auto", JSON.stringify(fake.state.searches.at(-1)));
+      // scope 可选透传——给出即上 query，全缺不上
+      const sScope = await http("POST", A.base + "/memory/search", { token: tA, body: { q: "smoke-scope", agentScope: "global", workspaceScope: "*" } });
+      check("search scope → 200", sScope.status === 200 && Array.isArray(sScope.json?.items), sScope.status + " " + sScope.text.slice(0, 120));
+      check("search 透传 agent_scope/workspace_scope", fake.state.searches.at(-1)?.q === "smoke-scope"
+        && fake.state.searches.at(-1)?.agent_scope === "global" && fake.state.searches.at(-1)?.workspace_scope === "*",
+        JSON.stringify(fake.state.searches.at(-1)));
+      const sNoScope = await http("POST", A.base + "/memory/search", { token: tA, body: { q: "smoke-noscope" } });
+      check("search 无 scope → 不上 scope 参数", sNoScope.status === 200
+        && fake.state.searches.at(-1)?.q === "smoke-noscope"
+        && fake.state.searches.at(-1)?.agent_scope === null && fake.state.searches.at(-1)?.workspace_scope === null,
+        JSON.stringify(fake.state.searches.at(-1)));
     }
 
     // search 超时 → 502（假 mneme 延迟 3s > bridge 1s 超时）
@@ -343,7 +370,7 @@ async function main() {
       const conv = { user: "remote 冒烟用户提问", assistant: "remote 冒烟助手回答", url: "https://chat.deepseek.com/a/b", sessionId: "s-" + TAG };
       const r1 = await http("POST", A.base + "/memory/conversation", { token: tA, body: conv });
       check("POST /memory/conversation 首次入库（进缓冲）", r1.status === 201 && r1.json?.action === "buffered", r1.status + " " + r1.text.slice(0, 160));
-      // v0.5：原料进 bridge 缓冲（不落 mneme）
+      // 原料进 bridge 缓冲（不落 mneme）
       const savesAtConvStart = fake.state.saves.length;
       check("conversation 未写 mneme", fake.state.saves.length === savesAtConvStart, "saves=" + fake.state.saves.length);
       const r2 = await http("POST", A.base + "/memory/conversation", { token: tA, body: conv });
@@ -352,7 +379,7 @@ async function main() {
       const r3 = await http("POST", A.base + "/memory/conversation", { token: tA, body: { ...conv, assistant: "换一个回答就不去重" } });
       check("内容不同再次入缓冲（mneme 仍零写入）", r3.status === 201 && fake.state.saves.length === savesBefore, r3.status + " saves=" + fake.state.saves.length);
 
-  // ---- v0.4 批量导入 ----
+  // ---- 批量导入 ----
   {
     const r1 = await http("POST", A.base + "/memory/import", { token: tA, body: { items: [
       { user: "旧会话问1", assistant: "旧会话答1", url: "https://x/s/old1" },
@@ -362,7 +389,7 @@ async function main() {
     ] } });
     check("POST /memory/import 批量受理", r1.status === 200, r1.status + " " + r1.text.slice(0, 120));
     check("import 计数 accepted=2 deduped=1 rejected=1", r1.json?.accepted === 2 && r1.json?.deduped === 1 && r1.json?.rejected === 1, JSON.stringify(r1.json));
-    // v0.5：导入原料进 bridge 缓冲（不落 mneme）
+    // 导入原料进 bridge 缓冲（不落 mneme）
     check("import 未写 mneme", fake.state.saves.length === savesAtConvStart, "saves=" + fake.state.saves.length);
     const r2 = await http("POST", A.base + "/memory/import", { token: tA, body: { items: [] } });
     check("import 空数组受理 accepted=0", r2.status === 200 && r2.json?.accepted === 0, r2.status + " " + r2.text.slice(0, 100));
@@ -370,7 +397,7 @@ async function main() {
     check("import 无 items → 400", r3.status === 400, r3.status + " " + r3.text.slice(0, 100));
     }
 
-    // ---- v0.4（task-9）：/memory/import/estimate 预估器 + maxImportChars 闸 ----
+    // ---- /memory/import/estimate 预估器 + maxImportChars 闸 ----
     {
       const savesBeforeImport = fake.state.saves.length; // estimate 不得落库的基准
       // 卡片形态 items：与 L2 摘要卡同构（sessionId + kind）
@@ -418,7 +445,7 @@ async function main() {
       const ok2 = { sessionId: "sess-under", kind: "summary-card", user: "v".repeat(4500), assistant: "b".repeat(4500) };
       const rOk = await http("POST", A.base + "/memory/import", { token: tA, body: { items: [ok1, ok2] } });
       check("import 预算内（~1.8万字符）放行", rOk.status === 200 && rOk.json?.accepted === 2, rOk.status + " " + rOk.text.slice(0, 120));
-      // v0.5：sessionId/kind 进 bridge 缓冲行（session_id 列 / kind 列）
+      // sessionId/kind 进 bridge 缓冲行（session_id 列 / kind 列）
       const bufDb1 = openBufferDb(join(tmp, "buffer-A", "buffer.db"));
       const bufRows = bufDb1 ? bufDb1.prepare("SELECT * FROM buffer WHERE status='pending' AND session_id='sess-under'").all() : [];
       if (bufDb1) bufDb1.close();
@@ -433,7 +460,23 @@ async function main() {
       check("GET /memory/status 透传 + backend", r.status === 200 && r.json?.version === "0.8.9" && r.json?.backend === "remote", r.status + " " + r.text.slice(0, 160));
     }
 
-    // ---- GET /memory/context（v0.2 remote 聚合）----
+    // ---- GET /memory/context（remote 聚合）----
+    {
+    // 上游端点优先——fake mneme 开 /context 桩，bridge remote 应走端点路径
+    fake.state.contextEndpoint = true;
+    const rE = await http("GET", A.base + "/memory/context?q=smoke-endpoint&topK=4", { token: tA });
+    check("context endpoint 优先 200", rE.status === 200, rE.status + " " + rE.text.slice(0, 200));
+    check("context endpoint via=endpoint", rE.json?.via === "endpoint", JSON.stringify(rE.json?.via));
+    check("context endpoint profile 透传", rE.json?.profile === "fake-user-profile: 偏好中文回复，注重新鲜度", JSON.stringify(rE.json?.profile));
+    check("context endpoint rules 透传", Array.isArray(rE.json?.rules) && rE.json.rules.length === 2, JSON.stringify(rE.json?.rules));
+    // pinsLimit 默认 5 > items 3 条 → 全进 pins、related=[]（切分语义：前 pinsLimit 条 → pins）
+    check("context endpoint pins 取前 pinsLimit 条（不足全收）", Array.isArray(rE.json?.pins) && rE.json.pins.length === 3 && rE.json.pins[0].title === "endpoint-pin-1" && rE.json.pins[2].title === "endpoint-rel:smoke-endpoint", JSON.stringify(rE.json?.pins?.map((m) => m.title)));
+    check("context endpoint related 取其余（本例为空）", Array.isArray(rE.json?.related) && rE.json.related.length === 0, JSON.stringify(rE.json?.related));
+    check("context endpoint 4 字段瘦身", [...rE.json.pins, ...rE.json.related].every((m) => Object.keys(m).sort().join(",") === "content,importance,title,type"), "keys ok");
+    check("context endpoint 未打 /search", fake.state.searches.length === 0 || fake.state.searches.every((s) => !String(s.q).includes("smoke-endpoint")), JSON.stringify(fake.state.searches));
+    fake.state.contextEndpoint = false;   // 关回，保下方降级路径断言语境
+  }
+
     {
       // 带 q：四路聚合
       const r = await http("GET", A.base + "/memory/context?q=smoke-query&topK=4", { token: tA });
@@ -515,6 +558,10 @@ async function main() {
       const r = await http("POST", C.base + "/memory/search", { token: tC, body: { q: "smoke-embedded-pitfall-" + TAG, topK: 5 } });
       const hit = Array.isArray(r.json?.items) && r.json.items.some((i) => i.id === savedId);
       check("embedded search 命中新写入", r.status === 200 && hit, r.status + " " + r.text.slice(0, 200));
+      // scope 可选透传（embedded → searchMemories scope 选项）——
+      // 隔离副本 scopeEnabled 默认关，行为与不传一致，仅验证参数路径不炸
+      const rScope = await http("POST", C.base + "/memory/search", { token: tC, body: { q: "smoke-embedded-pitfall-" + TAG, topK: 5, agentScope: "global" } });
+      check("embedded search scope → 200", rScope.status === 200 && Array.isArray(rScope.json?.items), rScope.status + " " + rScope.text.slice(0, 200));
     }
     {
       const r = await http("GET", C.base + "/memory/recent?limit=5", { token: tC });
@@ -533,7 +580,7 @@ async function main() {
       const r = await http("GET", C.base + "/memory/status", { token: tC });
       check("embedded status: version/backend/total", r.status === 200 && r.json?.backend === "embedded" && typeof r.json?.version === "string" && typeof r.json?.memories?.total === "number", r.status + " " + r.text.slice(0, 220));
     }
-    // ---- GET /memory/context（v0.2 embedded 聚合，副本库）----
+    // ---- GET /memory/context（embedded 聚合，副本库）----
     {
       // 副本库的用户设置表先垫高价值数据：profile/rules 写进 user_settings kv，
       // pins 用一条 importance=5 的记忆（经 save 链路写入，不直改库）
@@ -569,7 +616,28 @@ async function main() {
       check("embedded context 无 token → 401", r3.status === 401, r3.status);
     }
 
-    // ---- v0.4（task-9）：断点续跑端到端（副本库 + fake-dsh headless 桩）----
+    // ---- embedded 端点路径（contextSource:"endpoint"，injectCandidates 全语义）----
+    {
+      const cfgE = {
+        ...baseCfg, bridgeToken: "bt-E-" + TAG, port: BC + 1, host: "127.0.0.1",
+        mneme: { mode: "embedded", libPath: "", dataDir: embedDir.replace(/\\/g, "/"), contextSource: "endpoint" },
+        distill: { enabled: false, dshCommand: fakeDshCmd, headlessTimeoutMs: 30000 },
+        sessionCleanup: { dshHome: join(tmp, "fake-dsh-home") }
+      };
+      const E = await startBridge(cfgE, "E", tmp);
+      const tE = "bt-E-" + TAG;
+      const rE = await http("GET", E.base + "/memory/context?q=smoke-pin-high-" + TAG + "&topK=4", { token: tE });
+      check("embedded endpoint 200", rE.status === 200, rE.status + " " + rE.text.slice(0, 200));
+      check("embedded endpoint via=endpoint", rE.json?.via === "endpoint", JSON.stringify(rE.json?.via));
+      check("embedded endpoint profile 读自 settings", rE.json?.profile === "smoke 副本库画像：偏好简洁中文回复", JSON.stringify(rE.json?.profile));
+      check("embedded endpoint items 全部 4 字段", [...rE.json.pins, ...rE.json.related].every((m) => Object.keys(m).sort().join(",") === "content,importance,title,type"), "keys ok");
+      check("embedded endpoint q 命中进候选", [...rE.json.pins, ...rE.json.related].some((m) => m.title.includes("smoke-pin-high-" + TAG)), JSON.stringify([...rE.json.pins, ...rE.json.related].map((m) => m.title)));
+      const rE2 = await http("GET", E.base + "/memory/context", { token: tE });
+      check("embedded endpoint q 空 → 200", rE2.status === 200 && rE2.json?.via === "endpoint", rE2.status + " via=" + rE2.json?.via);
+      stopBridge(E);
+    }
+
+    // ---- 断点续跑端到端（副本库 + fake-dsh headless 桩）----
     // 真实触发路径：同会话分批上报（超 MAX_BATCH 的大会话）。批 1 蒸馏后该会话
     // 在 tags 里留 imp-sess:<sid>distilled；批 2（迟到条目）到齐后再蒸馏时被
     // 会话级跳过——不烧 LLM，且迟到条目被标 distilled 排空状态机。
@@ -604,13 +672,13 @@ async function main() {
         const buf1 = openBufferDb(join(tmp, "buffer-C", "buffer.db"));   // v0.5.1 实例隔离
         try {
           round1 = db1.prepare("SELECT COUNT(*) AS n FROM memories WHERE source LIKE 'dsh-distiller%'").get().n;
-          // v0.5：原始行在 bridge 缓冲——蒸馏完成 = status='done' + session_id 匹配
+          // 原始行在 bridge 缓冲——蒸馏完成 = status='done' + session_id 匹配
           marks1 = buf1 ? buf1.prepare("SELECT status FROM buffer WHERE session_id = 'sess-rs-1'").all() : [];
         } finally { db1.close(); if (buf1) buf1.close(); }
         if (round1 === before1 + 2 && marks1.length >= 2 && marks1.every(t => t.status === "done")) break;   // v0.5：原料全部 done
       }
       check("resume: 批1 蒸馏产物入库（+2）", round1 === before1 + 2, "before=" + before1 + " after=" + round1);
-      // v0.5：原料 4 行（批1 2 行 + 已 done 的），全部标 done
+      // 原料 4 行（批1 2 行 + 已 done 的），全部标 done
       check("resume: 批1 原料行标记 done（无 pending 残留）", marks1.length >= 2 && marks1.every(t => t.status === "done"), JSON.stringify(marks1).slice(0, 200));
       check("resume: 批1 原料无 pending 残留", !marks1.some(t => t.status === "pending"), "pending 数=" + marks1.filter(t => t.status === "pending").length);
 
@@ -640,7 +708,7 @@ async function main() {
         } finally { if (buf2) buf2.close(); }
         if (marks2.length >= 4 && marks2.every(t => t.status === "done")) break;   // 全 done 即排空
       }
-      // v0.5：迟到条目也排空（status=done，不留永久 pending）
+      // 迟到条目也排空（status=done，不留永久 pending）
       check("resume: 批2（迟到）行也标 done", marks2.length >= 4 && marks2.every(t => t.status === "done"), "rows=" + marks2.length + " " + JSON.stringify(marks2));
       await sleep(8000);
       {
@@ -665,7 +733,7 @@ async function main() {
       const db = new DatabaseSync(join(embedDir, "memory.db"));
       const row = db.prepare("SELECT id, type, title, source FROM memories WHERE id = ?").get(savedId);
       check("副本库直查到 embedded 写入行", row && row.source === "smoke" && row.title.includes(TAG), JSON.stringify(row));
-      // v0.5：原料不落 mneme——副本库应查无此行，且 buffer.db 有对应行
+      // 原料不落 mneme——副本库应查无此行，且 buffer.db 有对应行
       const convRow = db.prepare("SELECT id FROM memories WHERE type = 'history' AND source = 'edge-extension' AND content LIKE ?").get("%embedded 冒烟用户提问%");
       check("副本库无 conversation 原料行（v0.5 架构）", !convRow, JSON.stringify(convRow));
       const buf3 = openBufferDb(join(tmp, "buffer-C", "buffer.db"));   // v0.5.1 实例隔离

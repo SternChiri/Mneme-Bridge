@@ -108,10 +108,10 @@ cd Mneme-Bridge
 
 ### 第 2 步 · 启动桥接服务
 
-双击项目根目录的 **启动mneme-bridge.cmd**：
+双击项目根目录的 **启动mneme-bridge.cmd**（托盘常驻）：
 
 - **首次运行**会问你"是否注册开机自启"——按 Y 常驻，按 N 或回车跳过（之后可跑 `bridge-launcher.cmd install` 补注册）
-- 之后运行即启动托盘常驻（右键托盘图标可打开状态页 / 重启 / 退出）
+- 之后运行直接启动托盘常驻（右键托盘图标可打开状态页 / 重启 / 退出）
 
 服务首次启动会在 `mneme-bridge/config.json` 自动生成配置，其中有一个随机 `bridgeToken`：
 
@@ -130,7 +130,7 @@ cd Mneme-Bridge
 ### 第 3 步 · 安装浏览器扩展
 
 1. Edge 打开 `edge://extensions`
-2. 打开 **开发人员模式**
+2. 打开左下角 **开发人员模式**
 3. 点 **加载解压缩的扩展** → 选 `mneme-edge-extension` 目录
 
 ### 第 4 步 · 把 token 填进扩展
@@ -186,7 +186,7 @@ cd Mneme-Bridge
 1. **取上下文**：扩展按你当前输入的话题，向本地桥接请求相关记忆
 2. **拼装**：桥接返回画像与通用偏好（会话首轮）+ 当轮话题相关的记忆
 3. **注入**：隐式模式拼进请求体；可见模式先写进输入框供你过目
-4. **检索质量**：由 mneme 的混合检索提供，桥接层额外做关键词补路、寒暄跳过与元记忆过滤
+4. **检索质量**：由 mneme 的混合检索提供（建议 mneme ≥ 0.8.14，注入走上游 `GET /context` 管线）；`mneme.contextSource="heuristic"` 的降级拼装路径额外做关键词补路、寒暄跳过与元记忆过滤
 
 ## 🧩 桥接服务的 REST 接口
 
@@ -197,7 +197,7 @@ cd Mneme-Bridge
 |:--|:--|
 | `GET /health` | 健康检查（免鉴权） |
 | `GET /memory/context?q=&topK=` | 按话题取注入上下文（画像 + 偏好 + 相关记忆） |
-| `GET /memory/search?q=` · `/recent` · `/list` | 检索 / 最近 / 全部列表 |
+| `POST /memory/search` · `GET /memory/recent` · `/list` | 检索 / 最近 / 全部列表 |
 | `POST /memory/save` | 写入一条记忆 |
 | `GET /memory/pending` · `DELETE /memory/pending?id=` | 待蒸馏队列的读取与删除 |
 | `GET /memory/conversation` | 对话去重写入（扩展上报对话用） |
@@ -214,7 +214,7 @@ cd Mneme-Bridge
 |:--|:--|:--|
 | `port` | 8760 | 监听端口 |
 | `bridgeToken` | 首次启动随机生成 | 扩展鉴权凭证 |
-| `mneme.mode` | `auto` | auto（探测 DSH API）/ embedded / remote |
+| `mneme.mode` | `auto` | auto（启动时探测一次）/ embedded / remote；remote 为 8790 REST（DSH 外部访问或独立 daemon） |
 | `mneme.libPath` / `dataDir` | 空（自动探测） | embedded 模式的记忆库位置 |
 | `mneme.contextExcludeSensitive` | `true` | 注入（/memory/context）是否排除带 sensitivity 标注的记忆——敏感条目不随每轮请求发往网页端 |
 | `mneme.allowedLibRange` | `^0.8` | embedded 模式 mneme lib 版本门控；超出区间拒绝启动。空串关闭校验 |
@@ -242,7 +242,7 @@ node server.js
 并**刷新 DeepSeek 页面**（content script 不会热更新，这一步最容易被忘）。
 
 **日志**：`mneme-bridge/logs/`（结构化 JSON，含检索命中、蒸馏批次、错误栈）。
-扩展的调试输出在 DeepSeek 页面的 DevTools Console，过滤 `[mneme` 即可；`[mneme/cs] content script 版本 x.x.x`
+扩展的调试输出在 DeepSeek 页面的 DevTools Console，过滤 `[mneme` 即可；`[mneme/cs] content script 版本 0.6.1 mode=implicit`
 这行是验证"新代码是否真的生效"的最快手段。
 
 **跑测试前请注意**：smoke 会校验生产记忆库的 mtime/size 未变（零写红线），因此**别在测试期间改动生产库**。
