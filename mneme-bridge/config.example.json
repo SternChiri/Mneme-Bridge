@@ -14,7 +14,7 @@
     "contextRelatedTopK": 6,
     "contextExcludeSensitive": true,
     "contextSource": "auto",
-    "allowedLibRange": "^0.8"
+    "allowedLibRange": "^0.8.14"
   },
   "conversation": {
     "capacity": 500

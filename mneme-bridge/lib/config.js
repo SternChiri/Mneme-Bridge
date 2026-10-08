@@ -54,8 +54,9 @@ function defaults() {
       // 失败降级自建启发式）| "endpoint"（仅端点，失败即错）| "heuristic"（仅自建启发式）。
       contextSource: "auto",
       // embedded 模式 mneme lib 版本门控（lib 内部签名无稳定性契约）。
-      // 语法 ^MAJOR.MINOR：major 相同且 minor ≥ 该值即放行；空串 = 关闭校验。
-      allowedLibRange: "^0.8",
+      // 语法 ^MAJOR.MINOR[.PATCH]：major 相同且 (minor, patch) 逐级 ≥ 即放行；
+      // 下界 0.8.14 起（strictScope 越权修复）；空串 = 关闭校验。
+      allowedLibRange: "^0.8.14",
       contextRelatedTopK: 6
     },
     // 对话链路的 bridge 侧去重（任务硬性要求）：sha256(user+\n+assistant) 的 LRU

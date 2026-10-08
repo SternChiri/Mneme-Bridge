@@ -59,20 +59,23 @@ export async function createEmbeddedBackend(mnemeCfg) {
   // 版本门控——lib/ 是 src 同步产物，内部签名无稳定性契约，
   // 行号级耦合每次发版都可能断。读安装包 package.json，超出已验证区间（allowedLibRange，
   // 默认 "^0.8"）明确拒绝启动，提示升级 bridge 或显式放宽区间。
-  // 区间语法（自实现，不引依赖）：^MAJOR.MINOR = major 相同且 minor ≥ MINOR。
+  // 区间语法（自实现，不引依赖）：^MAJOR.MINOR[.PATCH] = major 相同且
+  // (minor, patch) 逐级 ≥（两段时只比 minor；三段时 minor 大于放行，minor 等则比 patch）。
   {
-    const range = mnemeCfg.allowedLibRange || "^0.8";
+    const range = mnemeCfg.allowedLibRange || "^0.8.14";
     let pkg = null;
     try {
       pkg = JSON.parse(fs.readFileSync(join(libPath, "..", "package.json"), "utf8"));
     } catch { /* package.json 读不到时跳过门控（非标准安装），日志提示 */ }
     if (pkg && typeof pkg.version === "string") {
       const m = pkg.version.match(/^(\d+)\.(\d+)(\.(\d+))?/);
-      const r = range.match(/^\^(\d+)\.(\d+)$/);
+      const r = range.match(/^\^(\d+)\.(\d+)(\.(\d+))?$/);
       if (m && r) {
-        const [vmaj, vmin] = [Number(m[1]), Number(m[2])];
-        const [rmaj, rmin] = [Number(r[1]), Number(r[2])];
-        const ok = vmaj === rmaj && vmin >= rmin;
+        const vmaj = Number(m[1]), vmin = Number(m[2]), vpat = Number(m[4] ?? 0);
+        const rmaj = Number(r[1]), rmin = Number(r[2]);
+        // range 三段时（r[4] 有值）minor 等还需 patch ≥ 下界 patch；两段时 minor 大于即放行
+        const ok = vmaj === rmaj
+          && (vmin > rmin || (vmin === rmin && (r[4] === undefined || vpat >= Number(r[4]))));
         if (!ok) {
           throw new Error(
             "embedded: mneme lib 版本 " + pkg.version + " 超出已验证区间 " + range +

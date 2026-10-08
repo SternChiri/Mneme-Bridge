@@ -69,7 +69,9 @@ node server.js
   `MNEME_BRIDGE_LOG_DIR` 同理重定向日志。
 - 换过 mneme token（面板重置）就同步改 `mneme.token`。
 - `mneme.contextSource`（v0.6.2）：`/memory/context` 的 pins/related 数据源——`"auto"`（默认，优先上游注入管线端点，失败降级自建启发式）| `"endpoint"`（仅端点，失败即错）| `"heuristic"`（仅自建启发式，等价 0.6.1 行为）。端点路径需 mneme ≥0.8.14（remote 为 `GET /context`，embedded 为 `service.injectCandidates`）。v0.6.2 起自建 pins 两级正则启发式（INTERACT/SCENE）退役移除，降级路径为朴素身份直查（preference/constraint 且 importance≥4）。
-- **建议 mneme ≥0.8.14**：`GET /context` 注入管线全语义 + strictScope 图召回绕过修复（#371）。`allowedLibRange` 默认 `^0.8` 不变。
+- **建议 mneme ≥0.8.14**：`GET /context` 注入管线全语义 + strictScope 图召回绕过修复（#371）。`allowedLibRange` 默认 `^0.8.14`（低于该版本 embedded 拒绝启动，可显式放宽但自担风险）。
+- **注入候选的 scope 语义**：bridge 调上游注入管线（`GET /context` / `service.injectCandidates`）不传 scope——bridge 无会话身份，scope 两参全缺在上游语义里是「不解析」而非「匹配任意」。若 mneme 开了 `strictScope`，此时 scope 墙不会立起来，bridge 拿到的是**未经硬过滤的候选集**，不等于任何身份的可见集；bridge 侧只做 sensitivity 排除（`contextExcludeSensitive`）与元记忆过滤（见下），最终出境内容以 bridge 过滤结果为准。
+- **元记忆过滤（isMeta）是本地策略**：/memory/context 会把标题形似版本号/组件名、或 tags 含 `meta`/`self_referential` 的条目从注入块剔除。上游 mneme 无此概念，属 bridge 本机启发式，上游文档不描述此行为。
 
 ## REST 接口
 

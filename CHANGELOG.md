@@ -4,13 +4,23 @@
 
 | 组件 | 形态 | 版本 |
 |---|---|---|
-| **mneme-bridge** | 本地 Node 服务（托盘常驻） | 0.6.2 |
+| **mneme-bridge** | 本地 Node 服务（托盘常驻） | 0.6.3 |
 | **mneme-bridge-ext** | Edge / Chrome 扩展（MV3） | 0.6.1 |
 
 版本号规则：小修 → `0.6.x`；新功能 → `0.7.0`；破坏性变更 → `1.0.0`（留给三端全通之日）。
 
 ---
 
+## v0.6.3 — 按上游 #363 维护者核对意见修正
+
+### 🛠 桥接
+
+- **remote /context 端点候选数对齐**：端点请求 `topK` 改为 `topK + pinsLimit`，与 embedded `injectCandidates` 同口径（此前 remote 只传 topK，切到端点路径时 related 最多少出 pinsLimit 条）
+- **版本门控下界钉 0.8.14**：`mneme.allowedLibRange` 默认 `^0.8` → `^0.8.14`（吃上游 strictScope 图召回绕过修复 #371）；区间语法扩展支持三段式 `^MAJOR.MINOR.PATCH`（minor 大于放行，minor 等则比 patch）
+
+### 📖 文档
+
+- README 明确三项注入语义（上游 #363 维护者指出需文档化）：① scope 墙语义——bridge 调注入管线不传 scope，`strictScope` 下 bridge 拿到的是未硬过滤候选集，不等于任何身份的可见集；② 元记忆过滤（isMeta）是 bridge 本地策略，上游无此概念；③ 网页注入候选无跨轮轮换（/context 无会话状态，daemon 刻意无状态），属已知行为
 ## v0.6.2 — /memory/context 接入上游注入管线端点
 
 ### 🆕 桥接

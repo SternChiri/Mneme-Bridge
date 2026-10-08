@@ -95,7 +95,7 @@ function summarize() {
  * 其余路径 404；除 /health 外 auth 必须是 "Bearer " + FAKE_MNEME_TOKEN，否则 401。
  */
 function startFakeMneme(port) {
-  const state = { saves: [], lastAuth: "", searches: [], contextEndpoint: false };
+  const state = { saves: [], lastAuth: "", searches: [], contextEndpoint: false, contextCalls: [] };
   const server = createServer((req, res) => {
     const url = new URL(req.url, "http://fake-mneme");
     const p = url.pathname;
@@ -178,6 +178,7 @@ function startFakeMneme(port) {
         if (!state.contextEndpoint) return reply(404, { error: "not-found" });
         const q = (url.searchParams.get("q") ?? "").trim();
         const topK = Number(url.searchParams.get("topK") ?? 5);
+        state.contextCalls.push({ q, topK });
         // 形状对齐真实 /context：items 按注入优先级排序——pin 前置，related 在后
         const items = [
           { id: "ctx-pin1", type: "preference", title: "endpoint-pin-1", content: "endpoint pin content 1", tags: [], importance: 5, source: "fake", created_at: "2026-03-02T00:00:00Z", updated_at: "2026-03-02T00:00:00Z" },
@@ -275,7 +276,7 @@ async function main() {
   const cfgB = { ...baseCfg, bridgeToken: "bt-B-" + TAG, port: BB, host: "127.0.0.1", mneme: { mode: "remote", url: `http://127.0.0.1:${DEAD}`, token: FAKE_MNEME_TOKEN, requestTimeoutMs: 1000 } };
   const cfgC = {
     ...baseCfg, bridgeToken: "bt-C-" + TAG, port: BC, host: "127.0.0.1",
-    mneme: { mode: "embedded", libPath: "", dataDir: embedDir.replace(/\\/g, "/"), contextSource: "heuristic" },   // libPath 留空自动探测；显式 heuristic 保住降级路径断言语境
+    mneme: { mode: "embedded", libPath: "F:/DeepSeek/.dsh/profiles/desktop/node_modules/@modusensus/dsh-mneme/lib", dataDir: embedDir.replace(/\\/g, "/"), contextSource: "heuristic" },   // libPath 显式指 desktop 0.8.14（自动探测可能命中旧 web profile 被门控拒）；显式 heuristic 保住降级路径断言语境
     // 断点续跑端到端：蒸馏命令指向 fake-dsh 包装（秒回固定 JSON）；
     // 探测拉长防误触发（dsh-probe 只在离线→在线跳变时触发，fake 端口恒离线）
     distill: { enabled: false, dshCommand: fakeDshCmd, headlessTimeoutMs: 30000 },
@@ -474,6 +475,8 @@ async function main() {
     check("context endpoint related 取其余（本例为空）", Array.isArray(rE.json?.related) && rE.json.related.length === 0, JSON.stringify(rE.json?.related));
     check("context endpoint 4 字段瘦身", [...rE.json.pins, ...rE.json.related].every((m) => Object.keys(m).sort().join(",") === "content,importance,title,type"), "keys ok");
     check("context endpoint 未打 /search", fake.state.searches.length === 0 || fake.state.searches.every((s) => !String(s.q).includes("smoke-endpoint")), JSON.stringify(fake.state.searches));
+    // 候选数与 embedded 同口径：topK + pinsLimit 一次给足（少传 remote 会最多少 pinsLimit 条 related）
+    check("context endpoint topK=pinsLimit+topK（4+5=9）", fake.state.contextCalls.length === 1 && fake.state.contextCalls[0].topK === 9, JSON.stringify(fake.state.contextCalls));
     fake.state.contextEndpoint = false;   // 关回，保下方降级路径断言语境
   }
 
@@ -620,7 +623,7 @@ async function main() {
     {
       const cfgE = {
         ...baseCfg, bridgeToken: "bt-E-" + TAG, port: BC + 1, host: "127.0.0.1",
-        mneme: { mode: "embedded", libPath: "", dataDir: embedDir.replace(/\\/g, "/"), contextSource: "endpoint" },
+        mneme: { mode: "embedded", libPath: "F:/DeepSeek/.dsh/profiles/desktop/node_modules/@modusensus/dsh-mneme/lib", dataDir: embedDir.replace(/\\/g, "/"), contextSource: "endpoint" },
         distill: { enabled: false, dshCommand: fakeDshCmd, headlessTimeoutMs: 30000 },
         sessionCleanup: { dshHome: join(tmp, "fake-dsh-home") }
       };

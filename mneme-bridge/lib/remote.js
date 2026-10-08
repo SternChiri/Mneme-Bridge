@@ -151,7 +151,9 @@ export function createRemoteBackend(mnemeCfg) {
           const r = await call("/context", {
             query: {
               ...(String(q ?? "").trim() ? { q: String(q).trim() } : {}),
-              topK,
+              // 与 embedded 的 injectCandidates 同口径：topK + pinsLimit 一次给足，
+              // bridge 侧再切 pins/related（少传会在 remote 模式下最多少出 pinsLimit 条 related）
+              topK: topK + pinsLimit,
               threshold: 3
             }
           });
