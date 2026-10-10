@@ -6,7 +6,7 @@
 //      一眼看出匹配规则差在哪。
 //   D. 记忆收集：SSE 容错解析（delta.content/v/content/text，失败退化递归收集）。
 'use strict'
-  console.log('[mneme/inj] inject script 版本 0.6.1');
+  console.log('[mneme/inj] inject script 版本 0.6.2');
 ;
 (function () {
   if (window.__MNEME_INJ__) return;
@@ -20,11 +20,11 @@
   const CTX_TTL_MS = 60000;
   let seq = 0;
 
-  let bgNonce = '';   // v0.6.1：content 下发的一次性握手 nonce，bg 命令必带（空=未握手）
+  let bgNonce = '';   // content 下发的一次性握手 nonce，bg 命令必带（空=未握手）
   let injectMode = 'implicit';   // v0.5.34：inject 层感知注入方式——visible 时 implicit 改写必须让位
   window.addEventListener('mneme-ext:cmd', (e) => {
     const d = e.detail || {};
-    if (d.type === 'nonce' && typeof d.nonce === 'string') bgNonce = d.nonce;   // v0.6.1：握手
+    if (d.type === 'nonce' && typeof d.nonce === 'string') bgNonce = d.nonce;   // 握手
     if (typeof d.debug === 'boolean') debug = d.debug;
     if (d.injectMode === 'visible' || d.injectMode === 'implicit') injectMode = d.injectMode;
     if (d.type === 'ctx' && d.key !== undefined) {
@@ -70,7 +70,10 @@
       }
     }
     }
-    const rel = globalOnly ? [] : (ctx.related || []).filter((m) => m && m.title); // globalOnly：query 不匹配时只给全局块；skipGlobal 时仍给 related
+    // skipGlobal（会话已注过全局）时即使 query 不匹配也带上缓存 related——
+    // 否则 globalOnly 清空 related + skipGlobal 压掉全局 = 空块 = 整轮无记忆；
+    // 全局记忆已在服务器会话历史里，related 略陈旧可接受。
+    const rel = (globalOnly && !skipGlobal) ? [] : (ctx.related || []).filter((m) => m && m.title);
     if (rel.length) {
       lines.push('相关记忆：');
       for (const m of rel.slice(0, 5)) {
@@ -81,12 +84,34 @@
     return HEADER + '\n' + lines.join('\n') + '\n' + FOOTER;
   }
 
+  // ---- 会话门控（localStorage 持久化）----
+  // DS 请求体不回传历史（prompt 只含当轮文本，历史由服务器侧 parent_message_id 串联），
+  // historyHasBlock 在真实 schema 下恒 false。改以 chat_session_id 为准：同一会话只在
+  // 首次注入成功时记入 localStorage，后续轮与刷新后同会话均只带 related（skipGlobal）。
+  const SEEN_KEY = 'mneme_seen_sids';
+  const SEEN_MAX = 50;
+  function readSeenSids() {
+    try { const v = JSON.parse(window.localStorage.getItem(SEEN_KEY) || '{}'); return v && typeof v === 'object' ? v : {}; } catch (e) { return {}; }
+  }
+  function markSessionSeen(id) {
+    if (!id) return;
+    const seen = readSeenSids();
+    seen[id] = Date.now();
+    const keys = Object.keys(seen);
+    if (keys.length > SEEN_MAX) {
+      keys.sort((a, b) => seen[a] - seen[b]);
+      for (const k of keys.slice(0, keys.length - SEEN_MAX)) delete seen[k];
+    }
+    try { window.localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch (e) { /* 部分环境禁 localStorage */ }
+  }
+
   function rewriteBody(bodyText) {
     const j = safeJson(bodyText);
     if (!j) return { body: bodyText, userText: '', injected: false };
     const sid = typeof j.chat_session_id === 'string' ? j.chat_session_id : null;
     const isNewSession = sid === null ? true : sid !== lastSessionId;
     if (sid !== null) lastSessionId = sid;
+    const sessionSeen = sid !== null ? readSeenSids()[sid] !== undefined : false;
     let userText = '';
     let injected = false;
     const msgs = Array.isArray(j.messages) ? j.messages
@@ -96,6 +121,7 @@
       // DeepSeek 真实 schema 是顶层 prompt 字段
       if (typeof j.prompt === 'string' && j.prompt) {
         userText = j.prompt;
+        if (userText.indexOf(HEADER) >= 0) { userText = stripBlockText(userText); j.prompt = userText; dbg('prompt 请求出口剥除旧块 len=' + userText.length); }
       } else {
         // 兜底：非 UUID 的最长字符串（chat_session_id 是 36 位 UUID，必须排除）
         const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -114,6 +140,21 @@
         userText = typeof m.content === 'string' ? m.content
           : Array.isArray(m.content) ? collectStrings(m.content).join('')
           : String(m.text || m.message || '');
+        // 编辑重发：预填文本可能含历史注入块。出口先剥（回写消息体，旧块不再进
+        // 服务器），再以干净文本作检索 key。只处理最后一条 user 消息，历史消息不动。
+        if (userText.indexOf(HEADER) >= 0) {
+          const clean = stripBlockText(userText);
+          if (typeof m.content === 'string') m.content = clean;
+          else if (Array.isArray(m.content)) {
+            for (let ci = 0; ci < m.content.length; ci++) {
+              const part = m.content[ci];
+              if (part && typeof part.text === 'string' && part.text.indexOf(HEADER) >= 0) part.text = stripBlockText(part.text);
+              else if (typeof part === 'string' && part.indexOf(HEADER) >= 0) m.content[ci] = stripBlockText(part);
+            }
+          }
+          userText = clean;
+          dbg('请求出口剥除旧块，剩余 len=' + userText.length);
+        }
         const cacheFresh = ctxCache.data && (Date.now() - ctxCache.at) < CTX_TTL_MS;
         const sameQuery = ctxCache.key === userText.slice(0, 120);
         // 请求体历史里已带注入块（此前轮注入过且被 DS 原样回传历史）→ 不重复注入。
@@ -123,13 +164,20 @@
           const s = typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => (typeof x === 'string' ? x : (x && x.text) || '')).join('') : (c && c.text) || '';
           return s.indexOf('记忆参考 | 来自本机记忆库') >= 0;
         });
+
           if (injectMode === 'visible') { dbg('visible 模式，implicit 改写让位'); break; }
         // 每一轮都要注入 related——历史已含全局块时只跳过全局段（skipGlobal），
         // 而不是整轮跳过。isNewSession 判定仍用于区分首轮（全局段）与后续轮（仅 related）。
-        var skipGlobalThisRound = historyHasBlock;
+        var skipGlobalThisRound = historyHasBlock || sessionSeen;
         // 每一轮都注入 related（后续轮 skipGlobal 不带全局段）
-        if (!cacheFresh || !sameQuery) { dbg('无新鲜 ctx，跳过注入'); break; }
-        const block = buildBlock(ctxCache.data, false, skipGlobalThisRound);
+        if (!cacheFresh || !sameQuery) {
+          // ctx 过期或 query 不匹配（编辑重发/打字快于预取）：与 prompt 路径同构——
+          // 触发预取（供下一轮）；ctx 过期则本轮跳过，query 不匹配则降级注入。
+          try { window.dispatchEvent(new CustomEvent('mneme-ext:cmd', { detail: { type: 'prefetch', text: userText.slice(0, 120) } })); } catch (e) {}
+          if (!cacheFresh) { dbg('无新鲜 ctx，已触发预取，本轮跳过'); break; }
+          dbg('query 不匹配，降级注入（globalOnly）');
+        }
+        const block = buildBlock(ctxCache.data, !sameQuery, skipGlobalThisRound);
         if (!block) { dbg('ctx 为空块'); break; }
         if (typeof m.content === 'string') {
           m.content = block + '\n\n' + m.content;
@@ -149,6 +197,7 @@
           dbg('未知消息字段形态，注入放弃'); break;
         }
         injected = true;
+        markSessionSeen(sid);
         dbg('隐式注入完成，块长', block.length);
         break;
       }
@@ -160,15 +209,17 @@
       const globalOnly = cacheFresh && !sameQuery; // v0.2.7：query 不匹配（打字快于预取）时降级注入全局块
       // prompt（多轮全文）里已带注入块 → 不重复注入画像/偏好
       const historyHasBlock = userText.indexOf('记忆参考 | 来自本机记忆库') >= 0;
+
       if (cacheFresh && !sameQuery) { try { window.dispatchEvent(new CustomEvent('mneme-ext:cmd', { detail: { type: 'prefetch', text: userText.slice(0, 120) } })); } catch (e) {} }   // v0.5.26
       if (injectMode === 'visible') { dbg('visible 模式，implicit 改写让位'); }
       else if (cacheFresh && (sameQuery || globalOnly || historyHasBlock)) {   // v0.5.39：每轮注入；历史含块时 skipGlobal
-        const block = buildBlock(ctxCache.data, globalOnly, historyHasBlock);
+        const block = buildBlock(ctxCache.data, globalOnly, historyHasBlock || sessionSeen);
         if (block) {
           if (typeof j.prompt === 'string' && j.prompt) {
             j.prompt = block + '\n\n' + j.prompt;
             injected = true;
             dbg('prompt 字段隐式注入完成，块长', block.length);
+            markSessionSeen(sid);
           }
         }
       } else {
@@ -439,11 +490,87 @@
     const origOpen = XO.open;
     const origSend = XO.send;
     XO.open = function (method, url) {
-      this.__mneme = (String(method).toUpperCase() === 'POST' && isChatUrl(url)) ? { url: url } : null;
+      const mUp = String(method).toUpperCase();
+      this.__mneme = (mUp === 'POST' && isChatUrl(url)) ? { url: url, edit: false }
+        : (mUp === 'POST' && /chat\/edit_message/i.test(url)) ? { url: url, edit: true }
+        : null;
+      if (debug && String(method).toUpperCase() === 'POST') dbg('XHR POST', url, isChatUrl(url) ? '[chat命中]' : '[未命中chat规则]');
       return origOpen.apply(this, arguments);
     };
     XO.send = function (body) {
       const info = this.__mneme;
+      if (info && info.edit) {
+        // 编辑重发走独立接口 edit_message。schema（实测样本）：
+        // {chat_session_id, message_id, ref_file_ids, prompt, search_enabled, thinking_enabled, action}
+        // 新文本在顶层 prompt 字段，与 chat/completion 的 prompt 路径同构：
+        // 剥旧块 + 缓存判定 + 降级/跳过 + 注入块，处理完再发。
+        const raw = typeof body === 'string' ? body : null;
+        if (raw != null) {
+          try {
+            const j = JSON.parse(raw);
+            let userText = typeof j.prompt === 'string' ? j.prompt : '';
+            lastSessionId = j.chat_session_id || lastSessionId; // 收集器上报用，不能依赖主路径抓取
+            if (userText && userText.indexOf(HEADER) >= 0) { userText = stripBlockText(userText); dbg('edit_message 出口剥除旧块 len=' + userText.length); }
+            if (userText) {
+              const cacheFresh = ctxCache.data && (Date.now() - ctxCache.at) < CTX_TTL_MS;
+              const sameQuery = ctxCache.key === userText.slice(0, 120);
+              if (!cacheFresh || !sameQuery) {
+                // 编辑重发不走打字预取：这里补触发，缓存没新鲜数据则本轮先裸发
+                try { window.dispatchEvent(new CustomEvent('mneme-ext:cmd', { detail: { type: 'prefetch', text: userText.slice(0, 120) } })); } catch (e) {}
+                if (!cacheFresh) { dbg('edit_message 无新鲜 ctx，本轮裸发'); }
+                else { dbg('edit_message query 不匹配，降级注入（globalOnly）'); }
+              }
+              const skipGlobal = readSeenSids()[j.chat_session_id] !== undefined;
+              if (injectMode !== 'visible' && ctxCache.data && cacheFresh) {
+                const block = buildBlock(ctxCache.data, !sameQuery, skipGlobal);
+                if (block) {
+                  j.prompt = block + '\n\n' + userText;
+                  dbg('edit_message 注入 len=' + (block + userText).length);
+                  markSessionSeen(j.chat_session_id);
+                }
+              }
+            }
+            const out = JSON.stringify(j);
+            if (debug) dbg('edit_message 发出', 'len=' + out.length);
+            origSend.call(this, out);
+        // 响应侧：edit_message 的回复同样是 SSE 流，挂上与 chat/completion 相同的收集器，
+        // 否则编辑重发产生的轮次永远不会进入待蒸馏队列。
+        const c = createCollector(userText);
+        let processed = 0;
+        const origRC = this.onreadystatechange;
+        this.onreadystatechange = function () {
+          try {
+            const ct = (this.getResponseHeader && this.getResponseHeader('content-type')) || '';
+            if (this.readyState >= 3 && /event-stream|stream/i.test(ct)) {
+              const fresh = String(this.responseText || '').slice(processed);
+              processed = (this.responseText || '').length;
+              if (fresh) c.feed(fresh);
+            }
+            if (this.readyState === 4) {
+              if (/event-stream|stream/i.test(ct)) c.emitIf('xhr-end');
+              else {
+                const all = collectStrings(safeJson(this.responseText)).sort(function (a, b) { return b.length - a.length; });
+                c.emitWith(all[0] || '', 'xhr-non-stream');
+              }
+            }
+          } catch (e) { dbg('edit_message 响应解析异常', String(e)); }
+          if (origRC) return origRC.apply(this, arguments);
+        };
+        const origOP = this.onprogress;
+        this.onprogress = function () {
+          try {
+            const fresh = String(this.responseText || '').slice(processed);
+            processed = (this.responseText || '').length;
+            if (fresh) c.feed(fresh);
+          } catch (e) { /* 静默 */ }
+          if (origOP) return origOP.apply(this, arguments);
+        };
+            return;
+          } catch (e) { dbg('edit_message 处理异常，原样发送: ' + (e && e.message)); }
+        }
+        origSend.apply(this, arguments);
+        return;
+      }
       if (!info) return origSend.apply(this, arguments);
       const bodyText = typeof body === 'string' ? body
         : (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) ? body.toString() : null;
@@ -746,7 +873,7 @@
   function bgSend(msg, cb) {
     var id = 'bg' + (++__bgSeq);
     __bgPending[id] = cb;
-    window.dispatchEvent(new CustomEvent('mneme-ext:cmd', { detail: { type: 'bg', id: id, nonce: bgNonce, msg: msg } }));   // v0.6.1：nonce 握手
+    window.dispatchEvent(new CustomEvent('mneme-ext:cmd', { detail: { type: 'bg', id: id, nonce: bgNonce, msg: msg } }));   // nonce 握手
     // 兜底超时：content 侧异常时回调 null
     setTimeout(function () { if (__bgPending[id]) { delete __bgPending[id]; cb(null); } }, 30000);
   }
@@ -1281,5 +1408,73 @@
     })();
   }
 
+  // ---- 剪贴板出口剥离：DS 复制按钮从内部 state 取文本（含注入块），
+  //      在最终 API 层剥掉 HEADER..FOOTER，所有复制路径（writeText / execCommand /
+  //      copy 事件）都经过这两个出口。剥离对不含块的无害（无命中原样返回）。
+  function stripBlockText(t) {
+    const s = String(t || '');
+    let out = s, did = false;
+    let h;
+    while ((h = out.indexOf(HEADER)) >= 0) {
+      const f = out.indexOf(FOOTER, h + HEADER.length);
+      if (f < 0) break; // 有头无尾：不剥，避免误删正文
+      out = out.slice(0, h) + out.slice(f + FOOTER.length);
+      did = true;
+    }
+    if (!did) return s;
+    // 顺带清掉剥离点留下的多余空行
+    return out.replace(/\n{3,}/g, '\n\n').replace(/^\s+|\s+$/g, '');
+  }
+  // 复制剥离门控：visible 模式块本来就可见，复制应保留全文；仅隐式模式才剥
+  function clipStrip(t) { return injectMode === 'visible' ? t : stripBlockText(t); }
+  function patchClipboard() {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        const origWrite = navigator.clipboard.writeText.bind(navigator.clipboard);
+        navigator.clipboard.writeText = function (t) {
+          try { return origWrite(clipStrip(t)); } catch (e) { return origWrite(t); }
+        };
+      }
+    } catch (e) { /* clipboarboard 只读环境：静默 */ }
+    try {
+      // execCommand('copy') 与部分按钮走 DataTransfer：包 getData 没用（写入侧），
+      // 覆盖 DataTransfer.prototype.setData，写入时即剥
+      const DT = window.DataTransfer && window.DataTransfer.prototype;
+      if (DT && DT.setData) {
+        const origSet = DT.setData;
+        DT.setData = function (type, t) {
+          try { return origSet.call(this, type, clipStrip(t)); } catch (e) { return origSet.call(this, type, t); }
+        };
+      }
+    } catch (e) { /* 静默 */ }
+    try {
+      // copy 事件兜底：页面若直接构造 ClipboardEvent，事件对象上的 setData 同样
+      // 落到被覆写的 DataTransfer.prototype.setData；这里再拦一层 clipboardData
+      // 的 writeText（部分实现走 async Clipboard API 的事件路径）
+      document.addEventListener('copy', function (ev) {
+        try {
+          const cd = ev.clipboardData;
+          if (!cd) return;
+          const orig = cd.setData ? cd.setData.bind(cd) : null;
+          if (orig && !cd.__mnemePatched) {
+            cd.__mnemePatched = true;
+            cd.setData = function (type, t) { return orig(type, clipStrip(t)); };
+          }
+        } catch (e) { /* 静默 */ }
+      }, true);
+    } catch (e) { /* 静默 */ }
+  }
+  patchClipboard();
+
+    // sendBeacon 也打出 URL（beacon 完全静默，debug 时显形）
+    if (navigator.sendBeacon && !navigator.sendBeacon.__mnemePatched) {
+      const origBeacon = navigator.sendBeacon.bind(navigator);
+      const patchedBeacon = function (url, data) {
+        if (debug) dbg('sendBeacon', String(url));
+        return origBeacon(url, data);
+      };
+      patchedBeacon.__mnemePatched = true;
+      navigator.sendBeacon = patchedBeacon;
+    }
   dbg('fetch/XHR 覆写完成 (v0.2.1, MAIN world document_start)');
 })();

@@ -11,3 +11,4 @@ dist/
 *.zip
 .git-commit-msg.txt
 .local/
+docs/upstream-watch/

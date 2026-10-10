@@ -14,7 +14,13 @@
   const TAG = '[mneme/cs]';
 
   const cfgCache = { injectEnabled: true, injectMode: 'implicit', collectEnabled: true, debug: false };
-  chrome.storage.local.get(cfgCache, (c) => { Object.assign(cfgCache, c); pushCmd({ debug: cfgCache.debug }); });
+  let cfgReady = false; // storage 回填完成前，依赖配置的门控行为（掩蔽）必须等待
+  chrome.storage.local.get(cfgCache, (c) => {
+    Object.assign(cfgCache, c);
+    cfgReady = true;
+    pushCmd({ debug: cfgCache.debug, injectMode: cfgCache.injectMode }); // 回填后补发，inject.js 学到持久化的模式
+    if (typeof scheduleMask === 'function') scheduleMask(); // 回填完成，补扫一次
+  });
   chrome.storage.onChanged.addListener((ch) => {
     Object.keys(ch).forEach((k) => { if (k in cfgCache) cfgCache[k] = ch[k].newValue; });
     pushCmd({ debug: cfgCache.debug, injectMode: cfgCache.injectMode });
@@ -307,6 +313,196 @@
     }
   }
 
+  // ---- 历史消息注入块显示掩蔽（display mask）----
+  // 隐式注入改写的是发往服务器的请求体，注入块随消息存进服务器；刷新/切会话后
+  // 页面从服务器拉回渲染，历史 user 气泡里会露出注入块。服务端不可改，这里在
+  // 显示层把块吃掉：扫描消息文本节点，定位 HEADER..FOOTER（可跨节点）后用
+  // Range deleteContents 移除。边界：输入框/编辑态（contenteditable）不动，
+  // 否则会改变用户重发的内容；复制/站内搜索取内部 state，掩蔽不到；
+  // 手机 APP 无扩展，仍见原文。掩蔽仅在隐式注入模式下生效（visible 模式块本来
+  // 就是用户输入框里的可见文字，用户自控，不掩蔽）。
+  let maskScheduled = false;
+  let maskRemovedCount = 0;
+  let maskLastError = null;
+  function maskEditableSafe(el) {
+    return !el || !el.closest || !el.closest('textarea, input, [contenteditable="true"], [contenteditable="plaintext-only"], #mneme-panel-host');
+  }
+  function maskCollectNodes(root) {
+    const nodes = [];
+    let total = 0;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (n) {
+        if (!n.nodeValue || !n.nodeValue.length) return NodeFilter.FILTER_REJECT;
+        if (!maskEditableSafe(n.parentElement)) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    let n;
+    while ((n = walker.nextNode())) { nodes.push({ node: n, start: total }); total += n.nodeValue.length; }
+    return { nodes: nodes, total: total };
+  }
+  function maskOnce(root) {
+    const c = maskCollectNodes(root);
+    if (!c.total) return 0;
+    const full = c.nodes.map(function (x) { return x.node.nodeValue; }).join('');
+    const h = full.indexOf(HEADER);
+    if (h < 0) return 0;
+    const f = full.indexOf(FOOTER, h + HEADER.length);
+    if (f < 0) return 0;
+    const end = f + FOOTER.length;
+    function locate(off) {
+      let lo = 0, hi = c.nodes.length - 1;
+      while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (c.nodes[mid].start <= off) lo = mid; else hi = mid - 1; }
+      return { node: c.nodes[lo].node, offset: off - c.nodes[lo].start };
+    }
+    try {
+      // 块前后紧邻的空白一并划入删除区（pre-wrap/段落间隙会在气泡里留出空行）
+      let s2 = h; while (s2 > 0 && /\s/.test(full[s2 - 1])) s2--;
+      let e2 = end; while (e2 < full.length && /\s/.test(full[e2])) e2++;
+      const sp = locate(s2), ep = locate(e2);
+      const r = document.createRange();
+      r.setStart(sp.node, sp.offset);
+      r.setEnd(ep.node, ep.offset);
+      r.deleteContents();
+      // 删除点后紧邻的 <br> 与纯空白文本节点清掉（markdown 单换行的渲染产物）
+      const host = r.startContainer.nodeType === Node.TEXT_NODE
+        ? r.startContainer.parentElement
+        : r.startContainer;
+      if (host) {
+        let child = host.firstChild, guard = 0;
+        while (child && guard++ < 10) {
+          const blankText = child.nodeType === Node.TEXT_NODE && !(child.nodeValue || '').trim();
+          if (!blankText && child.nodeName !== 'BR') break;
+          const nxt = child.nextSibling;
+          host.removeChild(child);
+          child = nxt;
+        }
+      }
+      // 清理被掏空的段落容器（空 <p>/<div> 仍占行高）。
+      // 护栏：只摘「纯空壳」节点，绝不越过气泡正文容器（chat-content-message），
+      // 摘除即断链（React diff 拿到缺孩子的容器会重挂，输入框塌陷的教训）——
+      // 链顶只清空不摘除。
+      let anc = host;
+      while (anc && anc !== document.body) {
+        if ((anc.textContent || '').trim().length > 0) break;
+        if (anc.closest && anc.closest('[class*="chat-content-message"]') === anc) break;
+        const up = anc.parentElement;
+        anc.remove();
+        anc = up;
+      }
+    } catch (e) { maskLastError = String(e && e.stack || e); return 0; }
+    maskRemovedCount++;
+    return 1;
+  }
+  function maskAll() {
+    // 门控实时判：cfgCache 由 storage 异步回填，启动早期可能是默认值，
+    // 未回填完成前不得删除（否则 visible 用户刷新时被误掩蔽）
+    if (!cfgReady) return; // 配置未回填，不判定模式，先不动 DOM
+    if (cfgCache.injectEnabled === false || cfgCache.injectMode !== 'implicit') return;
+    if (!document.body) return;
+    for (let i = 0; i < 30; i++) { if (!maskOnce(document.body)) break; }
+  }
+  function scheduleMask() {
+    if (maskScheduled) return;
+    maskScheduled = true;
+    setTimeout(function () { maskScheduled = false; try { maskAll(); } catch (e) { /* 静默 */ } }, 300);
+  }
+  const maskMo = new MutationObserver(function (muts) {
+    for (const m of muts) {
+      if (m.type === 'characterData' || m.type === 'childList') { scheduleMask(); break; }
+    }
+  });
+  function startMask() {
+    if (!document.body) { document.addEventListener('DOMContentLoaded', startMask, { once: true }); return; }
+    maskAll();
+    maskMo.observe(document.body, { childList: true, subtree: true, characterData: true });
+  }
+  startMask();
+
+  // 编辑框清扫：点「编辑」时 DS 会把原消息文本（含注入块）填回输入框。
+  // 气泡掩蔽不了编辑框（跳过编辑态是掩蔽器的硬规则），这里反向处理：
+  // 不掩蔽，而是把输入框里的注入块直接删掉，只留正文供修改。
+  // React 受控输入的标准写入姿势：原生 value setter + input 事件；
+  // 即使 React 不认账（值回弹），请求层的剥旧块也兜底，不会把块再发回服务器。
+  function cleanEditable(el) {
+    try {
+      if (!el || el === document.body) return false;
+      const tag = el.tagName;
+      if (tag === 'TEXTAREA' || tag === 'INPUT') {
+        const v = el.value || '';
+        const h = v.indexOf(HEADER);
+        if (h < 0) return false;
+        const t = v.indexOf(FOOTER, h);
+        const nv = (t >= 0 ? v.slice(0, h) + v.slice(t + FOOTER.length) : v.slice(0, h)).replace(/\n{3,}/g, '\n\n').replace(/^\s+/, '');
+        // 首选 execCommand 替换：全选后插入产出受信任的 beforeinput/input 事件，
+        // React 受控值与 DS 的输入框自动增高都按真实键入走（原生 setter + 合成
+        // input 事件会被部分 isTrusted 检查无视，且高度逻辑不跟）。
+        try {
+          el.focus();
+          if (tag === 'TEXTAREA') el.setSelectionRange(0, v.length);
+          else el.select();
+          if (document.execCommand('insertText', false, nv)) return true;
+        } catch (eExec) { /* 落入 setter 兜底 */ }
+        const proto = tag === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+        setter.call(el, nv);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      }
+      if (el.isContentEditable) {
+        // contenteditable：跨节点 Range 删除（与掩蔽器同法）
+        const sel = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        const nodes = []; let n;
+        while ((n = sel.nextNode())) nodes.push(n);
+        const full = nodes.map((x) => x.nodeValue).join('');
+        const h = full.indexOf(HEADER);
+        if (h < 0) return false;
+        const t = full.indexOf(FOOTER, h);
+        const end = t >= 0 ? t + FOOTER.length : full.length;
+        const starts = []; let acc = 0;
+        for (const x of nodes) { starts.push(acc); acc += x.nodeValue.length; }
+        function locate(off) {
+          let lo = 0, hi = nodes.length - 1;
+          while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= off) lo = mid; else hi = mid - 1; }
+          return { node: nodes[lo], offset: off - starts[lo] };
+        }
+        const range = document.createRange();
+        const s1 = locate(h), s2 = locate(Math.min(end, full.length));
+        range.setStart(s1.node, Math.min(s1.offset, s1.node.nodeValue.length));
+        range.setEnd(s2.node, Math.min(s2.offset, s2.node.nodeValue.length));
+        range.deleteContents();
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      }
+      return false;
+    } catch (e) { return false; }
+  }
+  function cleanEditors(root) {
+    // 含块才动手，不清别的；不跳过聚焦框——编辑框弹出即被 DS 自动聚焦，
+    // 探针实锤（focused:true + hasHeader:true 被跳过）。块只出现在弹出瞬间，
+    // 清掉后后续周期无命中、天然 no-op，用户正在打的字不会被碰。
+    const cands = (root || document).querySelectorAll('textarea, input[type=text], input:not([type]), [contenteditable="true"], [contenteditable="plaintext-only"]');
+    for (const el of cands) {
+      if ((el.value || el.textContent || '').indexOf(HEADER) >= 0) cleanEditable(el);
+    }
+  }
+  // 挂在掩蔽防抖链上：maskAll 每次触发后顺带清扫编辑框
+  const _origMaskAll = maskAll;
+  maskAll = function () {
+    _origMaskAll();
+    try {
+      if (!cfgReady) return;
+      if (cfgCache.injectEnabled === false || cfgCache.injectMode !== 'implicit') return;
+      cleanEditors(document);
+      // 编辑框是点「编辑」后 React 延迟挂载的，首扫时可能还没渲染出来；
+      // 200ms 后补扫一遍（React 提交通常在 100ms 内）。
+      setTimeout(function () {
+        try { cleanEditors(document); } catch (e2) { /* 静默 */ }
+      }, 200);
+    } catch (e) { /* 静默 */ }
+  };
+
+
   // 把面板需要的工具暴露给第二个 IIFE（mountPanel）——
   // 两个 IIFE 是独立作用域，cfgCache/retrySend 原本面板拿不到（实测 ReferenceError）。
   window.__MNEME_CS_SHARED__ = {
@@ -314,7 +510,7 @@
     retrySend: retrySend,
     dbg: dbg
   };
-  console.log('[mneme/cs] content script 版本 0.6.1 mode=' + cfgCache.injectMode); dbg('content script 就绪 (v0.2, mode=' + cfgCache.injectMode + ')');
+  console.log('[mneme/cs] content script 版本 0.6.2 mode=' + cfgCache.injectMode); dbg('content script 就绪 (v0.2, mode=' + cfgCache.injectMode + ')');
 })();
 
 // ====================================================================
@@ -1613,7 +1809,7 @@
   window.addEventListener('mneme-ext:cmd', function (e) {
     var d = e.detail || {};
     if (d.type !== 'bg') return;
-    if (d.nonce !== BG_NONCE) { if (cfgCache.debug) dbg('bg 命令 nonce 校验失败，丢弃'); return; }   // v0.6.1：握手校验
+    if (d.nonce !== BG_NONCE) { if (cfgCache.debug) dbg('bg 命令 nonce 校验失败，丢弃'); return; }   // 握手校验
     var id = d.id;
     try {
       chrome.runtime.sendMessage(d.msg, function (r) {
