@@ -9,6 +9,7 @@
 [![License](https://img.shields.io/badge/license-MIT-3E63DD?style=flat-square)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.5-3E63DD?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org)
 [![Extension](https://img.shields.io/badge/extension-MV3-3E63DD?style=flat-square&logo=microsoftedge&logoColor=white)](https://github.com/SternChiri/Mneme-Bridge)
+[![English](https://img.shields.io/badge/English-version-8B5CF6?style=flat-square)](#english-version)
 
 </div>
 
@@ -97,7 +98,19 @@ DeepSeek 的记忆是分裂的：DSH 侧**可以**通过插件获得长期记忆
                      <DSH_HOME>/memory/
 ```
 
-### 第 1 步 · 下载项目
+### 方式 A · 让本机 Agent 替你装
+
+不想手动装？把下面这段原样复制粘贴给本机的 AI Agent（如DSH），它会替你装好：
+
+```text
+请帮我安装 Mneme Bridge（仓库：https://github.com/SternChiri/Mneme-Bridge）。请先阅读该仓库 README 的「快速开始」，然后按其中步骤在本机完成安装、启动桥接服务并配置浏览器扩展；需要我手动做的事（如在 Edge 里加载扩展、填写 token）请列出来告诉我。
+```
+
+### 方式 B · 手动安装
+
+按下面五步走：
+
+#### 第 1 步 · 下载项目
 
 ```bash
 git clone https://github.com/SternChiri/Mneme-Bridge.git
@@ -106,7 +119,7 @@ cd Mneme-Bridge
 
 或仓库页面 → **Code** → **Download ZIP** 解压（路径别含空格或中文）。解压后你会看到两个目录：`mneme-bridge/`（本地服务）与 `mneme-edge-extension/`（浏览器扩展）。
 
-### 第 2 步 · 启动桥接服务
+#### 第 2 步 · 启动桥接服务
 
 双击项目根目录的 **启动mneme-bridge.cmd**（托盘常驻）：
 
@@ -127,13 +140,13 @@ cd Mneme-Bridge
 
 > 记忆库位置默认留空自动探测（`$DSH_HOME` 或 `~/.dsh` 下的 mneme 目录）。DSH 装在非常规位置时，服务会报错提示你手工填 `mneme.libPath` 与 `mneme.dataDir`。
 
-### 第 3 步 · 安装浏览器扩展
+#### 第 3 步 · 安装浏览器扩展
 
 1. Edge 打开 `edge://extensions`
 2. 打开左下角 **开发人员模式**
 3. 点 **加载解压缩的扩展** → 选 `mneme-edge-extension` 目录
 
-### 第 4 步 · 把 token 填进扩展
+#### 第 4 步 · 把 token 填进扩展
 
 `edge://extensions` → **Mneme Bridge for DeepSeek** → **详细信息** → **扩展选项**，然后：
 
@@ -146,7 +159,7 @@ cd Mneme-Bridge
 
 保存后**重新加载扩展（↻）并刷新 DeepSeek 页面**——此步不能省，扩展脚本不会热更新。
 
-### 第 5 步 · 验证
+#### 第 5 步 · 验证
 
 打开 https://chat.deepseek.com ，侧栏底部出现 **「记忆设置」**：
 
@@ -217,7 +230,7 @@ cd Mneme-Bridge
 | `mneme.mode` | `auto` | auto（启动时探测一次）/ embedded / remote；remote 为 8790 REST（DSH 外部访问或独立 daemon） |
 | `mneme.libPath` / `dataDir` | 空（自动探测） | embedded 模式的记忆库位置 |
 | `mneme.contextExcludeSensitive` | `true` | 注入（/memory/context）是否排除带 sensitivity 标注的记忆——敏感条目不随每轮请求发往网页端 |
-| `mneme.allowedLibRange` | `^0.8` | embedded 模式 mneme lib 版本门控；超出区间拒绝启动。空串关闭校验 |
+| `mneme.allowedLibRange` | `^0.8.14` | embedded 模式 mneme lib 版本门控；超出区间拒绝启动。空串关闭校验 |
 | `distill.enabled` | `true` | 关掉即完全停止蒸馏 |
 | `distill.idleMs` | 10 分钟（未写进生成的 config 时按此兜底） | 会话静默多久后触发蒸馏 |
 | `distill.dshCommand` | `dsh` | 蒸馏用的 LLM 命令 |
@@ -242,7 +255,7 @@ node server.js
 并**刷新 DeepSeek 页面**（content script 不会热更新，这一步最容易被忘）。
 
 **日志**：`mneme-bridge/logs/`（结构化 JSON，含检索命中、蒸馏批次、错误栈）。
-扩展的调试输出在 DeepSeek 页面的 DevTools Console，过滤 `[mneme` 即可；`[mneme/cs] content script 版本 0.6.1 mode=implicit`
+扩展的调试输出在 DeepSeek 页面的 DevTools Console，过滤 `[mneme` 即可；`[mneme/cs] content script 版本 0.6.2 mode=implicit`
 这行是验证"新代码是否真的生效"的最快手段。
 
 **跑测试前请注意**：smoke 会校验生产记忆库的 mtime/size 未变（零写红线），因此**别在测试期间改动生产库**。
@@ -281,3 +294,289 @@ node server.js
 ## 📄 License
 
 MIT —— 详见 [LICENSE](LICENSE)。本项目包含/依赖 [dsh-mneme](https://github.com/slow-stack/mneme)（MIT）。
+
+---
+
+<a id="english-version"></a>
+
+[![简体中文](https://img.shields.io/badge/中文-版本-8B5CF6?style=flat-square)](#mneme-bridge)
+
+# Mneme Bridge
+
+**One memory for DSH and the DeepSeek web app — one brain, two entry points**
+
+## 🌟 What is this
+
+**Your AI memory should not live in two separate worlds.**
+
+When you work in DSH, it remembers your projects, preferences, and decisions. Switch to the DeepSeek web app for a casual chat, and it acts like it is meeting you for the first time. **Mneme Bridge connects the DeepSeek web app to DSH's memory store** — the same brain, two entrances.
+
+The project consists of two components and includes no cloud service:
+
+| Component | Form | Responsibility |
+|:--|:--|:--|
+| **mneme-bridge** | Local Node service | Captures conversations → invokes DSH distillation → reads/writes the memory store → serves retrieval APIs to the extension |
+| **Mneme Bridge for DeepSeek** | Edge / Chrome extension | Injects memory into web conversations, sends conversations back, provides a sidebar management panel |
+
+> **Memory foundation**: the memory pool behind this project is the upstream **[mneme](https://github.com/slow-stack/mneme)** (the memory plugin for DSH, MIT) — storage, consolidation, dedup/merge, conflict adjudication, and semantic retrieval are all its responsibility. This project **does not copy, modify, or build another store**; it reads and writes only through mneme's APIs.
+>
+> **This project is not a DSH plugin** and is not installed inside DSH. It is a standalone browser extension + local service that adds the "web access" layer on top of mneme.
+
+### What problem it solves
+
+DeepSeek's memory is split: the DSH side **can** gain long-term memory through plugins, while the web app starts every new session from zero.
+
+| Scenario | Today | With this project |
+|:--|:--|:--|
+| You discussed your thesis topic on the web yesterday; today you open a new session | "Please first introduce your research direction" | "Last time you said you wanted to work on UAV path-planning algorithms — shall we continue?" |
+| You told DSH "I prefer prose-style replies, no AI tone" | The web app still talks like an AI | The web app carries your profile and preferences from the very first turn |
+| Project details discussed on the web | DSH knows nothing about them | Distilled into the store; DSH can retrieve them next time |
+
+> The difference from "saving a chat log in the browser": memories are **distilled atomic facts** (retrievable, deduplicable, conflict-adjudicable) and share the same store with DSH — not a data silo.
+
+### How it works at a glance
+
+```
+   You chat on chat.deepseek.com
+   │
+     Extension captures the conversation (manual review possible)
+   │
+   ▼
+   ┌──────────────────────────────┐
+   │  Local buffer queue (two sources)      │
+   │  ① New sessions: auto-enqueued per turn │
+   │  ② Old sessions: manual import from the panel │
+   └──────────────────────────────┘
+   │
+     Triggered automatically once a session goes idle
+   ▼
+   DSH headless distillation
+   │
+   ▼
+   mneme memory store
+     storage / dedup & merge / retrieval / conflict adjudication
+     (all provided by upstream mneme)
+   │
+   ▼
+   Next chat injects memories relevant to the topic
+```
+
+> Memory **storage, dedup, merge, conflict adjudication, and retrieval** are all provided by upstream mneme; this project does not implement them.
+
+## 🚀 Quick start
+
+### Prerequisites
+
+| Dependency | Requirement | Notes |
+|:--|:--|:--|
+| System | Windows 10/11 | The launcher scripts are Windows-only for now; on other platforms run `node server.js` manually |
+| **Node.js** | **≥ 22.5** | The bridge uses the built-in `node:sqlite`; older versions fail to start |
+| **DSH** | Installed and launched at least once | DSH does **not** ship memory features by itself; a plugin provides them |
+| **mneme plugin** | Installed in your local DSH | This project depends on that memory plugin |
+
+**How the three relate:**
+
+```
+      DSH (desktop)                          DeepSeek web app
+           │                                      │
+           │ install yourself                     │ provided by this project
+           ▼                                      ▼
+      mneme plugin                             browser extension
+      (owner of memory)                        + local bridge service
+           │                                      │
+           └───────────the same memory store──────┘
+                     <DSH_HOME>/memory/
+```
+
+### Option A · Let your local Agent install it
+
+Prefer not to install it yourself? Paste the paragraph below verbatim to your local AI agent (e.g. DSH) — it will install everything for you:
+
+```text
+Please install Mneme Bridge for me (repo: https://github.com/SternChiri/Mneme-Bridge). Read the "Quick start" section of the repo's README first, then follow its steps to install and start the bridge service and set up the browser extension on this machine. List anything that must be done manually by me (e.g. loading the extension in Edge, filling in the token) and tell me when you are done.
+```
+
+### Option B · Manual installation
+
+Follow the five steps below:
+
+#### Step 1 · Download the project
+
+```bash
+git clone https://github.com/SternChiri/Mneme-Bridge.git
+cd Mneme-Bridge
+```
+
+Or on the repo page → **Code** → **Download ZIP** and extract (avoid spaces or non-ASCII characters in the path). After extraction you will see two directories: `mneme-bridge/` (the local service) and `mneme-edge-extension/` (the browser extension).
+
+#### Step 2 · Start the bridge service
+
+Double-click **启动mneme-bridge.cmd** in the project root (runs resident in the tray):
+
+- On **first run** it asks whether to register autostart — press Y to keep it resident, press N or Enter to skip (you can register later with `bridge-launcher.cmd install`)
+- On later runs it starts directly in the tray (right-click the tray icon for the status page / restart / exit)
+
+On first startup the service generates `mneme-bridge/config.json`, which contains a random `bridgeToken`:
+
+```json
+{
+  "port": 8760,
+  "bridgeToken": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "mneme": { "mode": "auto", "libPath": "", "dataDir": "" }
+}
+```
+
+**This token is the credential the extension uses to connect to the service; you will need it in step 4.** Open config.json and copy it.
+
+> The memory-store location is left empty by default and auto-detected (the mneme directory under `$DSH_HOME` or `~/.dsh`). If DSH is installed in a non-standard location, the service will error out and ask you to fill in `mneme.libPath` and `mneme.dataDir` manually.
+
+#### Step 3 · Install the browser extension
+
+1. In Edge, open `edge://extensions`
+2. Turn on **Developer mode** (bottom left)
+3. Click **Load unpacked** → select the `mneme-edge-extension` directory
+
+#### Step 4 · Fill the token into the extension
+
+`edge://extensions` → **Mneme Bridge for DeepSeek** → **Details** → **Extension options**, then:
+
+| Field | What to enter |
+|:--|:--|
+| **Bridge address** | `http://127.0.0.1:8760` (default; usually no change needed) |
+| **Access token** | Paste the `bridgeToken` copied in step 2 (required, otherwise the connection is rejected) |
+| Enable memory injection | ☑ |
+| Auto-collect conversations | ☑ (unchecked = no capture, no distillation) |
+
+After saving, **reload the extension (↻) and refresh the DeepSeek page** — this step cannot be skipped; extension scripts do not hot-reload.
+
+#### Step 5 · Verify
+
+Open https://chat.deepseek.com — a **"记忆设置" (Memory Settings)** panel appears at the bottom of the sidebar:
+
+1. Open it → the status at the top shows **bridge: connected ✓** (green dot) = token correct, service reachable
+2. Chat one turn → the "pending distillation queue" shows an entry
+3. Click "Distill now" → the "memory store" tab shows the distilled structured memories
+4. **Open a new session** → it already knows you
+
+## 📖 Features in detail
+
+### Two injection modes
+
+| | Implicit injection (default) | Visible injection |
+|:--|:--|:--|
+| Input box | Untouched, fully invisible | Memory block written before sending, visible |
+| Request body | Memory appended into the request | Untouched |
+| Best for | Everyday use | Seeing what memory this turn carries |
+
+Both modes follow the same rule: **the first turn of a session carries your profile and general preferences; every later turn only injects memories relevant to the current topic** — no repeated context bloat.
+
+### Two ingestion paths
+
+| | Auto-capture (new sessions) | Manual import (old sessions) |
+|:--|:--|:--|
+| Trigger | Auto-enqueued after each turn | Initiated manually from the panel via "Import old sessions" |
+| Scope | Ongoing web conversations | Existing historical sessions (read from DS APIs / export files) |
+| Granularity | Enqueued turn-by-turn, verbatim | You pick the sessions; two modes available |
+| Modes | Full import only | **Summary** (local first/last messages, zero cost) / **Full import** (complete conversation) |
+| Safeguards | Queue items can be pruned manually first | Session-count cap + character budget gate + estimate confirmation; over-limit requests error out |
+
+Both paths end up in the same buffer queue awaiting DSH headless distillation; the produced memories carry the provenance tag `web/<sessionId>`, traceable back to the web conversation they came from.
+
+### How memory gets injected
+
+1. **Fetch context**: the extension asks the local bridge for relevant memories based on your current input topic
+2. **Assemble**: the bridge returns profile & general preferences (first turn of a session) + memories relevant to the current topic
+3. **Inject**: implicit mode appends into the request body; visible mode writes into the input box for your review
+4. **Retrieval quality**: provided by mneme's hybrid retrieval (mneme ≥ 0.8.14 recommended; injection goes through the upstream `GET /context` pipeline); the `mneme.contextSource="heuristic"` fallback path additionally performs keyword bridging, greeting skip, and meta-memory filtering
+
+## 🧩 Bridge REST API
+
+> The bridge exposes plain HTTP and can be called by any script or client; auth header `Authorization: Bearer <bridgeToken>`.
+> `/memory/context`, `/memory/distill`, and `/memory/import*` are project-specific composite capabilities; `save/search/recent/list` forward to mneme's memory APIs.
+
+| Endpoint | Purpose |
+|:--|:--|
+| `GET /health` | Health check (no auth) |
+| `GET /memory/context?q=&topK=` | Fetch injection context by topic (profile + preferences + relevant memories) |
+| `POST /memory/search` · `GET /memory/recent` · `/list` | Search / recent / full list |
+| `POST /memory/save` | Write one memory |
+| `GET /memory/pending` · `DELETE /memory/pending?id=` | Read and remove the pending distillation queue |
+| `GET /memory/conversation` | Conversation write with dedup (used by the extension to report conversations) |
+| `GET /memory/imported-ids` | Imported session id list (the extension hides already-imported items) |
+| `POST /memory/distill` | Distill now |
+| `POST /memory/import` · `/memory/import/estimate` | Batch import and estimate |
+| `GET /memory/status` | Runtime status |
+
+## 🔧 Configuration (config.json)
+
+| Key | Default | Description |
+|:--|:--|:--|
+| `port` | 8760 | Listening port |
+| `bridgeToken` | Randomly generated on first start | Extension auth credential |
+| `mneme.mode` | `auto` | auto (probed once at startup) / embedded / remote; remote is the 8790 REST API (DSH external access or a standalone daemon) |
+| `mneme.libPath` / `dataDir` | empty (auto-detect) | Memory-store location for embedded mode |
+| `mneme.contextExcludeSensitive` | `true` | Whether injection (/memory/context) excludes memories carrying a sensitivity label — sensitive entries are not sent to the web app with every request |
+| `mneme.allowedLibRange` | `^0.8.14` | Version gate for the mneme lib in embedded mode; startup is refused outside the range. Empty string disables the check |
+| `distill.enabled` | `true` | Turn off to stop distillation entirely |
+| `distill.idleMs` | 10 minutes (fallback when absent from the generated config) | How long a session stays idle before distillation triggers |
+| `distill.dshCommand` | `dsh` | The LLM command used for distillation |
+| `import.maxImportChars` | 1.5 million | Per-batch import character gate |
+
+## 🛠️ Local development
+
+**Runtime**: Node ≥ 22.5. The bridge has zero npm dependencies — **no `npm install` needed**.
+
+```bash
+# Run the bridge in the foreground (logs straight to the console; for debugging)
+cd mneme-bridge
+node server.js
+
+# Start a second instance with an isolated config (does not disturb the production instance)
+# The three env vars MNEME_BRIDGE_CONFIG / _LOG_DIR / _DATA_DIR redirect everything
+set MNEME_BRIDGE_CONFIG=F:\temp\dev-config.json
+node server.js
+```
+
+**Extension-side debugging**: the extension is native MV3 with no build step — after editing the source, click **Reload (↻)** in `edge://extensions`,
+and **refresh the DeepSeek page** (content scripts do not hot-reload; this is the step most often forgotten).
+
+**Logs**: `mneme-bridge/logs/` (structured JSON: retrieval hits, distillation batches, error stacks).
+The extension's debug output lives in the DeepSeek page's DevTools Console; filter by `[mneme`. The line
+`[mneme/cs] content script 版本 0.6.2 mode=implicit` is the fastest way to verify "did my new code actually take effect".
+
+**Before running tests**: the smoke test verifies that the production memory store's mtime/size stay unchanged (zero-write red line), so **do not touch the production store while tests run**.
+
+## 💰 Cost
+
+- **Injection & retrieval**: local SQLite, **zero cost**
+- **Distillation**: uses your own DSH model quota; ~55,000 characters of conversation ≈ **¥0.04**
+
+## 🔐 Privacy & security
+
+- All data stays on your machine (SQLite + local files) — **nothing is uploaded to any third party**
+- The service listens on localhost/LAN only by default, with Bearer token auth; **LAN use only, never expose it to the public internet**
+- The only outbound request is distillation (it calls the model API you configured, with the raw conversation) — if you mind, disable `distill.enabled` and use only manual import and retrieval
+- **Injection egress**: every conversation appends the injection block (user profile / behavior rules / interaction preferences / topic-relevant memories) to the request sent to DeepSeek's servers — this is the very point of "bringing memory to the web side". Memories carrying a `sensitivity` label are **not** included in injection blocks by default (`mneme.contextExcludeSensitive`); disable injection if you mind data leaving your machine
+- **Page-script risk**: the extension's injection layer runs in the page's main world and communicates with the panel layer via page events. A malicious page script could in theory forge that event and read out the memory store (no bridgeToken needed). A one-time handshake nonce has been added to raise the bar, but this is mitigation, not strong isolation — **enable collection only on sites you trust**
+
+## 🗺️ Known limitations
+
+- Web-side DOM / API changes may require updating extension selectors (the built-in probe logs help locate issues)
+- DSH headless CLI credentials must be configured separately (follow the log hints on first distillation)
+- Memory **consolidation (dream) is handled on the DSH side** — the bridge only does sedimentation and retrieval; it does not run consolidation loops
+- Web conversations **do not enter the entity table** (the entity extractor is wired by the DSH host; the bridge cannot reach it), so the entity-retrieval channel cannot see web memories
+- Entries distilled by the bridge **bypass the DSH host's quality gates** (archiving/downweighting and write admission); purity relies on aligning the distillation prompt with upstream
+- Sharing is **asymmetric**: the web side writes global memories (visible to all DSH sessions); memories scoped to an agent on the DSH side are invisible to the web side — "web writes global, reads global only", not a bidirectional full sync
+- `saveWithDedupe` dedup is check-then-write (no unique constraint at the DB layer); two processes concurrently writing the same title carry a tiny duplicate probability
+- Web injection candidates have **no cross-turn rotation**: the upstream `GET /context` is stateless by session (the daemon is deliberately stateless), so under identical pressure the same batch of memories gets picked repeatedly; after retiring the homegrown pins heuristic, the bridge no longer provides rotation of its own — if you mind, the bridge would need to manage it (not implemented; known behavior)
+- The session cleaner identifies leftover sessions produced by this bridge by their internal format — an **experimental** capability (four gates against false deletes)
+- **Mobile is not implemented yet** — on the roadmap; PRs welcome
+
+## 🙏 Acknowledgments
+
+- **[dsh-mneme](https://github.com/slow-stack/mneme)** (MIT) — the memory foundation of this project. Memory storage, retrieval, and the distillation prompt pipeline are all provided by it; this project only "brings the web side in". Thanks to the upstream author.
+- **[DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness)** — the host of distillation and the memory store.
+
+## 📄 License
+
+MIT — see [LICENSE](LICENSE). This project contains/depends on [dsh-mneme](https://github.com/slow-stack/mneme) (MIT).
