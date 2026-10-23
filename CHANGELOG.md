@@ -4,10 +4,32 @@
 
 | 组件 | 形态 | 版本 |
 |---|---|---|
-| **mneme-bridge** | 本地 Node 服务（托盘常驻） | 0.6.3 |
+| **mneme-bridge** | 本地 Node 服务（托盘常驻） | 0.6.4 |
 | **mneme-bridge-ext** | Edge / Chrome 扩展（MV3） | 0.6.2 |
 
 版本号规则：小修 → `0.6.x`；新功能 → `0.7.0`；破坏性变更 → `1.0.0`（留给三端全通之日）。
+
+---
+
+## v0.6.5 — 仓库通用化与同标题合并补位
+
+### 🛠 桥接
+
+- **同标题记忆合并补位**：上游 `saveWithDedupe` 取候选用的是 `store.list({ type, limit: 100 })`，排序按 importance，与「找出同标题那一行」无关——某类型里高 importance 的行超过 100 条后，新写入的行进不了候选集，同标题再存会静默变成新行（已提 [slow-stack/mneme#505](https://github.com/slow-stack/mneme/issues/505)）。桥接侧写入前先按 `(type, title)` + scope 键做一次定向查询，命中就把 id 交给上游的 `_mergeInto` 走原合并逻辑（`appendContent` / `content_history` / 质量处置全部复用）。`summary` 类型跳过（上游按 source 身份去重、不看标题），查询异常静默放行，不影响写入
+
+### 📦 可移植性
+
+- **不再写死本机路径**：`scripts/smoke.mjs` 从 `$DSH_HOME`（缺省 `~/.dsh`）推导生产库 `<DSH_HOME>/memory`，mneme lib 则在各 profile 里自动挑版本最高的一个；两者可分别用 `MNEME_DATA_DIR` / `MNEME_LIB_PATH` 覆盖
+- **启动脚本改探测**：`start-bridge.vbs` 的 node 路径按 `%NODE_EXE%` → Program Files / LocalAppData 常见位置 → PATH 依次尝试；`deploy/start-hidden.vbs` 的 bridge 目录改由脚本自身位置推导（`..\mneme-bridge`）
+- **文档占位符化**：设计文档与查证结论里的本机路径改为 `<DSH_HOME>` / `<临时目录>`
+
+### 🧹 仓库卫生
+
+- 本机工作稿不再进仓库：`docs/upstream-*.md` 与 `docs/upstream-watch/` 加入 `.gitignore`；此前已被跟踪的三份上游草稿取消跟踪（文件保留在本地）
+
+### 🧪 测试
+
+- smoke **115/115 PASS**。此前 3 条 embedded 去重断言在 mneme lib 0.9.x 上失败，已随合并补位恢复（未改断言迁就实现）
 
 ---
 

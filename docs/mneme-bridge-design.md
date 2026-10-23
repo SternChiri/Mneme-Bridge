@@ -32,12 +32,12 @@
 
 ```js
 // embedded.js —— 全部从 DSH 实际安装路径 import（config 可覆盖）
-const MNEME = "F:/DeepSeek/.dsh/profiles/web/node_modules/@modusensus/dsh-mneme/lib";
+const MNEME = "<DSH_HOME>/profiles/<profile>/node_modules/@modusensus/dsh-mneme/lib";
 const { createStore } = await import(MNEME + "/store.js");
 const { createService } = await import(MNEME + "/service.js");
 const { createMirror } = await import(MNEME + "/mirror.js");      // 签名以 lib/mirror.js 为准，参照 index.js L191-286 组装
 const { createSettings } = await import(MNEME + "/settings.js");
-const DATA_DIR = "F:/DeepSeek/.dsh/memory";                        // 活跃库（junction 目标）
+const DATA_DIR = "<DSH_HOME>/memory";                              // 活跃库
 const store = createStore(DATA_DIR + "/memory.db");
 const settings = createSettings(store.db);
 const mirror = createMirror(/* 参照 index.js 组装参数 */);
@@ -74,8 +74,8 @@ async function mneme(pathname, { method = "GET", body, query } = {}) {
   "mneme": { "url": "http://127.0.0.1:8790",
              "token": "<mneme-token>",
              "mode": "auto",
-             "libPath": "F:/DeepSeek/.dsh/profiles/web/node_modules/@modusensus/dsh-mneme/lib",
-             "dataDir": "F:/DeepSeek/.dsh/memory" } }
+             "libPath": "<DSH_HOME>/profiles/<profile>/node_modules/@modusensus/dsh-mneme/lib",
+             "dataDir": "<DSH_HOME>/memory" } }
 ```
 启动：`node server.js`（可后续包 .cmd/VBS 快捷方式）。日志：单行 JSON 到 stdout + logs/bridge.log（轮转 5MB×3）。
 安全提示写进 README：0.0.0.0 + 明文 HTTP = token 明文过网，仅限家庭局域网；公网勿开。

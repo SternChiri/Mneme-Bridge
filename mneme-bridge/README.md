@@ -162,10 +162,14 @@ curl -X POST .../memory/import           # 2. 确认后分批导入（≤200/批
 node scripts/smoke.mjs
 ```
 
+> 仓库里不写死任何本机路径：smoke 从 `$DSH_HOME`（缺省 `~/.dsh`）推导生产库
+> `<DSH_HOME>/memory/memory.db`，并在各 profile 里自动挑版本最高的 mneme lib；
+> 也可用 `MNEME_DATA_DIR` / `MNEME_LIB_PATH` 单独覆盖。
+
 覆盖：假 mneme 打桩下的 remote 四链路（save/search/recent/conversation+去重）、
 副本库下的 embedded 同四链路、401/502/超时分支、OPTIONS 预检、
 生产库零接触校验（前后 stat 对比）。**smoke 不写生产库**——embedded 链路跑在
-复制到临时目录的库副本上（含 -wal/-shm）。最近一次结果：**114/114 PASS**（v0.6.2 含 /context 端点优先与降级、scope 透传断言；历史版本含 estimate 预估/字符闸/断点续跑端到端断言）。
+复制到临时目录的库副本上（含 -wal/-shm）。最近一次结果：**115/115 PASS**（2026-10-23，mneme lib 0.9.3）。此前的 3 条 embedded 去重断言失败根因在上游：`saveWithDedupe` 的候选集是 `store.list({type, limit:100})` 按 importance 排序，某类型高 importance 行超过 100 条后，新写入行进不了候选集 → 同标题再存恒返回 created。bridge 侧已用 `_mergeInto` 做定向补位（embedded 模式生效；remote 模式与 daemon 仍取决于上游修复）。
 
 设计文档核对项（docs/mneme-bridge-design.md §6）：
 

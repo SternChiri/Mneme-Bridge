@@ -35,7 +35,7 @@ export function createDistiller(opts) {
       const dc = config.distill || {};
       // Windows 坑（实测两次）：①spawn 解析到 .CMD shim（dsh.CMD）必须 shell:true
       // 否则 EINVAL；②shell:true 时 args 数组只做字符串拼接、不转义——含空格的
-      // 路径（node 在 C:\Program Files\nodejs）会被截断。对策：win32 下把命令与
+      // 路径（node 常装在 Program Files 这类含空格的目录）会被截断。对策：win32 下把命令与
       // 参数拼成单字符串（含空格的段手工加引号），以 window 原生语义执行。
       const useShell = process.platform === "win32";
       const extraArgs = Array.isArray(dc.dshArgs) ? dc.dshArgs : [];

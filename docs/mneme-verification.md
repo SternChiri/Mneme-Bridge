@@ -1,7 +1,7 @@
 # mneme 独立运行方式查证结论（2026-09-28，本机实测）
 
 插件：@modusensus/dsh-mneme **0.8.9**，安装于
-`F:\DeepSeek\.dsh\profiles\web\node_modules\@modusensus\dsh-mneme`（DSH_HOME=F:\DeepSeek\.dsh，profile=web）。
+`<DSH_HOME>\profiles\web\node_modules\@modusensus\dsh-mneme`（DSH_HOME 为 DSH 数据目录，profile=web）。
 
 ## 1. 独立运行方式：没有 daemon 二进制，有两条路
 
@@ -37,9 +37,9 @@ index.js 的组装顺序（L191-286）：mkdir memoryDir → createStore(memory.
 ## 3. 数据目录：无分裂风险
 
 - 配置 `memoryDir` 默认 `~/.dsh/memory`。
-- 本机 `C:\Users\Fan\.dsh\memory` 是 **junction → F:\DeepSeek\.dsh\memory**（已验证 readlink）。
-- 活跃库 `F:\DeepSeek\.dsh\memory\memory.db`（~10MB，WAL 模式，busy_timeout 先于 journal 切换设计支持多进程并发）。
-- bridge embedded 必须显式指向 `F:\DeepSeek\.dsh\memory`。
+- 本机 `~/.dsh/memory` 是指向 `<DSH_HOME>\memory` 的 **junction**（已验证 readlink），两处同一个库。
+- 活跃库 `<DSH_HOME>\memory\memory.db`（~10MB，WAL 模式，busy_timeout 先于 journal 切换设计支持多进程并发）。
+- bridge embedded 的 `dataDir` 必须显式指向 `<DSH_HOME>\memory`。
 
 ## 4. 外部 API 路由全表（README.md L444-533 + 源码路由分支核对）
 

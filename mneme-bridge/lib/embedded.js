@@ -157,6 +157,40 @@ export async function createEmbeddedBackend(mnemeCfg) {
   const SAVE_FIELDS = ["type", "title", "content", "importance", "tags", "source", "sensitivity", "occurred_at", "agent_scope", "workspace_scope"];
   const TYPE_RE = /^(preference|project|decision|history|rejected_solution|pitfall|constraint)$/;
 
+  // 同标题合并补位：上游 saveWithDedupe 的候选集是 store.list({type, limit:100})，
+  // 排序 importance DESC——与「找出同一个标题」无关：某类型里高 importance 的行
+  // 超过 100 条后，新写入的行进不了候选集，同标题再存会静默变成新行。这里先按
+  // (type, title) + scope 键做一次定向查询，命中就把 id 交给上游的 _mergeInto
+  // （issue #127）继续走原合并逻辑；查不到、查询出错、或类型是 summary（上游按
+  // source 身份去重、不看标题）都原样放行，行为与不打这个补位时一致。
+  const MERGE_TARGET_SQL = [
+    "SELECT id FROM memories",
+    "WHERE type = ? AND title = ?",
+    "  AND COALESCE(archived, 0) = 0 AND COALESCE(forgotten, 0) = 0",
+    "  AND TRIM(COALESCE(agent_scope, '')) = ?",
+    "  AND TRIM(COALESCE(workspace_scope, '')) = ?",
+    "  AND TRIM(COALESCE(sensitivity, '')) = ?",
+    "ORDER BY updated_at DESC LIMIT 1"
+  ].join("\n");
+  // 与上游 scopeKeyOf 同口径：非空 trim 字符串取 trim 值，其余按「未标注」处理。
+  const scopeKey = (v) => (typeof v === "string" && v.trim() ? v.trim() : "");
+  function findMergeTarget(memory) {
+    if (memory._mergeInto) return memory._mergeInto;
+    if (memory.type === "summary") return null;
+    try {
+      const row = store.db.prepare(MERGE_TARGET_SQL).get(
+        memory.type,
+        memory.title,
+        scopeKey(memory.agent_scope),
+        scopeKey(memory.workspace_scope),
+        scopeKey(memory.sensitivity)
+      );
+      return row?.id ?? null;
+    } catch {
+      return null; // 查重是补位，不能挡住写入
+    }
+  }
+
   return {
     backend: "embedded",
 
@@ -189,6 +223,8 @@ export async function createEmbeddedBackend(mnemeCfg) {
       for (const k of SAVE_FIELDS) {
         if (body[k] !== undefined) memory[k] = body[k];
       }
+      const mergeTarget = findMergeTarget(memory);
+      if (mergeTarget) memory._mergeInto = mergeTarget;
       let result;
       try {
         result = service.saveWithDedupe(memory);

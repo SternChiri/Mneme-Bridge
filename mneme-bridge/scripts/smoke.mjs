@@ -15,7 +15,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { mkdtemp, copyFile, stat, writeFile, rm } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -25,6 +25,36 @@ const openBufferDb = (path) => { try { if (!existsSync(path)) return null; retur
 const NODE = process.execPath;
 const FAKE_MNEME_TOKEN = "fake-mneme-token-abc123";
 const TAG = Date.now().toString(36);
+
+// ---- 本机路径解析 -----------------------------------------------------------
+// 仓库里不写死任何本机绝对路径：DSH home 默认取 $DSH_HOME，再退回 ~/.dsh；
+// 生产库与 mneme lib 还能各自用 MNEME_DATA_DIR / MNEME_LIB_PATH 单独覆盖。
+const DSH_HOME = process.env.DSH_HOME || join(homedir(), ".dsh");
+const PROD_DATA_DIR = process.env.MNEME_DATA_DIR || join(DSH_HOME, "memory");
+const compareVersion = (a, b) => {
+  const pa = String(a).split(".").map(Number), pb = String(b).split(".").map(Number);
+  for (let i = 0; i < 3; i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; }
+  return 0;
+};
+/** 在 DSH home 的各 profile 下找 @modusensus/dsh-mneme，取版本最高的那一个 lib。 */
+function resolveMnemeLib() {
+  if (process.env.MNEME_LIB_PATH) return process.env.MNEME_LIB_PATH.replace(/\\/g, "/");
+  const roots = [...new Set([DSH_HOME, join(homedir(), ".dsh")])];
+  let best = null;
+  for (const root of roots) {
+    for (const profile of ["desktop", "web", "headless", ""]) {
+      const base = profile ? join(root, "profiles", profile) : root;
+      const pkgDir = join(base, "node_modules", "@modusensus", "dsh-mneme");
+      if (!existsSync(join(pkgDir, "lib", "index.js"))) continue;
+      let version = "0.0.0";
+      try { version = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")).version || version; } catch { /* 版本读不到按最低算 */ }
+      if (!best || compareVersion(version, best.version) > 0) best = { version, lib: join(pkgDir, "lib").replace(/\\/g, "/") };
+    }
+  }
+  if (!best) throw new Error("找不到 @modusensus/dsh-mneme，装好后用 MNEME_LIB_PATH 指定其 lib 目录");
+  return best.lib;
+}
+const MNEME_LIB_PATH = resolveMnemeLib();
 
 // ---- 小工具 -----------------------------------------------------------------
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -244,7 +274,7 @@ process.on("exit", () => { for (const c of children) { try { c.kill(); } catch {
 // ---- 主流程 --------------------------------------------------------------------
 async function main() {
   const tmp = await mkdtemp(join(tmpdir(), "mneme-bridge-smoke-"));
-  const prodStatBefore = await stat(join("F:/DeepSeek/.dsh/memory", "memory.db"));
+  const prodStatBefore = await stat(join(PROD_DATA_DIR, "memory.db"));
   console.log("smoke tmpdir:", tmp);
 
   // 生产库只复制不打开（任务硬性约束 3）：memory.db + -wal + -shm 三件套
@@ -253,9 +283,9 @@ async function main() {
   mkdirSync(embedDir, { recursive: true });
   for (const suffix of ["", "-wal", "-shm"]) {
     try {
-      await copyFile(join("F:/DeepSeek/.dsh/memory", "memory.db" + suffix), join(embedDir, "memory.db" + suffix));
+      await copyFile(join(PROD_DATA_DIR, "memory.db" + suffix), join(embedDir, "memory.db" + suffix));
     } catch (e) {
-      if (suffix === "") throw new Error("生产库 memory.db 复制失败：" + e.message);
+      if (suffix === "") throw new Error("生产库 memory.db 复制失败（用 DSH_HOME 或 MNEME_DATA_DIR 指向含 memory.db 的目录）：" + e.message);
       // wal/shm 不存在是正常态（checkpoint 后消失）
     }
   }
@@ -276,7 +306,7 @@ async function main() {
   const cfgB = { ...baseCfg, bridgeToken: "bt-B-" + TAG, port: BB, host: "127.0.0.1", mneme: { mode: "remote", url: `http://127.0.0.1:${DEAD}`, token: FAKE_MNEME_TOKEN, requestTimeoutMs: 1000 } };
   const cfgC = {
     ...baseCfg, bridgeToken: "bt-C-" + TAG, port: BC, host: "127.0.0.1",
-    mneme: { mode: "embedded", libPath: "F:/DeepSeek/.dsh/profiles/desktop/node_modules/@modusensus/dsh-mneme/lib", dataDir: embedDir.replace(/\\/g, "/"), contextSource: "heuristic" },   // libPath 显式指 desktop 0.8.14（自动探测可能命中旧 web profile 被门控拒）；显式 heuristic 保住降级路径断言语境
+    mneme: { mode: "embedded", libPath: MNEME_LIB_PATH, dataDir: embedDir.replace(/\\/g, "/"), contextSource: "heuristic" },   // libPath 取自动探测到的最高版本；显式 heuristic 保住降级路径断言语境
     // 断点续跑端到端：蒸馏命令指向 fake-dsh 包装（秒回固定 JSON）；
     // 探测拉长防误触发（dsh-probe 只在离线→在线跳变时触发，fake 端口恒离线）
     distill: { enabled: false, dshCommand: fakeDshCmd, headlessTimeoutMs: 30000 },
@@ -623,7 +653,7 @@ async function main() {
     {
       const cfgE = {
         ...baseCfg, bridgeToken: "bt-E-" + TAG, port: BC + 1, host: "127.0.0.1",
-        mneme: { mode: "embedded", libPath: "F:/DeepSeek/.dsh/profiles/desktop/node_modules/@modusensus/dsh-mneme/lib", dataDir: embedDir.replace(/\\/g, "/"), contextSource: "endpoint" },
+        mneme: { mode: "embedded", libPath: MNEME_LIB_PATH, dataDir: embedDir.replace(/\\/g, "/"), contextSource: "endpoint" },
         distill: { enabled: false, dshCommand: fakeDshCmd, headlessTimeoutMs: 30000 },
         sessionCleanup: { dshHome: join(tmp, "fake-dsh-home") }
       };
@@ -749,7 +779,7 @@ async function main() {
     // ============================ 生产库零接触校验 ================================
     section = "safety";
     console.log("\n-- 生产库零接触校验 --");
-    const prodStatAfter = await stat(join("F:/DeepSeek/.dsh/memory", "memory.db"));
+    const prodStatAfter = await stat(join(PROD_DATA_DIR, "memory.db"));
     check("生产库 size 未变", prodStatBefore.size === prodStatAfter.size, `${prodStatBefore.size} → ${prodStatAfter.size}`);
     check("生产库 mtime 未变", prodStatBefore.mtimeMs === prodStatAfter.mtimeMs, `${prodStatBefore.mtimeMs} → ${prodStatAfter.mtimeMs}`);
 

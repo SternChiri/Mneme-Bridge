@@ -12,3 +12,6 @@ dist/
 .git-commit-msg.txt
 .local/
 docs/upstream-watch/
+
+# 本机工作稿与过程记录（不上传仓库）
+docs/upstream-*.md
