@@ -31,7 +31,7 @@ node server.js
 | 模式 | 触发条件 | 行为 |
 |---|---|---|
 | remote | `mneme.mode` = `"remote"`，或 `"auto"` 且探测到上游 8790 `/health` 活着 | 纯代理：请求转发 DSH standalone API（Bearer mneme token） |
-| embedded | `mneme.mode` = `"embedded"`，或 `"auto"` 且 8790 不在 | in-process import mneme lib（版本门控 `allowedLibRange`，建议 ≥0.8.14），直接开 `memory.db`（同库同语义） |
+| embedded | `mneme.mode` = `"embedded"`，或 `"auto"` 且 8790 不在 | in-process import mneme lib（版本门控 `allowedLibRange`，建议 ≥0.9.5），直接开 `memory.db`（同库同语义） |
 
 - 探测只在启动时做一次；运行中不热切换（安全理由见 server.js 头注）。
 - **remote 的前提**：DSH 面板「设置 → 外部访问」打开（kv `external_api.enabled=true`），
@@ -69,7 +69,7 @@ node server.js
   `MNEME_BRIDGE_LOG_DIR` 同理重定向日志。
 - 换过 mneme token（面板重置）就同步改 `mneme.token`。
 - `mneme.contextSource`（v0.6.2）：`/memory/context` 的 pins/related 数据源——`"auto"`（默认，优先上游注入管线端点，失败降级自建启发式）| `"endpoint"`（仅端点，失败即错）| `"heuristic"`（仅自建启发式，等价 0.6.1 行为）。端点路径需 mneme ≥0.8.14（remote 为 `GET /context`，embedded 为 `service.injectCandidates`）。v0.6.2 起自建 pins 两级正则启发式（INTERACT/SCENE）退役移除，降级路径为朴素身份直查（preference/constraint 且 importance≥4）。
-- **建议 mneme ≥0.8.14**：`GET /context` 注入管线全语义 + strictScope 图召回绕过修复（#371）。`allowedLibRange` 默认 `^0.8.14`（低于该版本 embedded 拒绝启动，可显式放宽但自担风险）。
+- **建议 mneme ≥0.9.5**：`GET /context` 注入管线全语义（含 `tier` 档位信号）、strictScope 图召回绕过修复（#371）、同标题合并候选窗口修复（#505）。`allowedLibRange` 默认 `^0.9.5`（低于该版本 embedded 拒绝启动，可显式放宽但自担风险）。
 - **注入候选的 scope 语义**：bridge 调上游注入管线（`GET /context` / `service.injectCandidates`）不传 scope——bridge 无会话身份，scope 两参全缺在上游语义里是「不解析」而非「匹配任意」。若 mneme 开了 `strictScope`，此时 scope 墙不会立起来，bridge 拿到的是**未经硬过滤的候选集**，不等于任何身份的可见集；bridge 侧只做 sensitivity 排除（`contextExcludeSensitive`）与元记忆过滤（见下），最终出境内容以 bridge 过滤结果为准。
 - **元记忆过滤（isMeta）是本地策略**：/memory/context 会把标题形似版本号/组件名、或 tags 含 `meta`/`self_referential` 的条目从注入块剔除。上游 mneme 无此概念，属 bridge 本机启发式，上游文档不描述此行为。
 
@@ -169,7 +169,7 @@ node scripts/smoke.mjs
 覆盖：假 mneme 打桩下的 remote 四链路（save/search/recent/conversation+去重）、
 副本库下的 embedded 同四链路、401/502/超时分支、OPTIONS 预检、
 生产库零接触校验（前后 stat 对比）。**smoke 不写生产库**——embedded 链路跑在
-复制到临时目录的库副本上（含 -wal/-shm）。最近一次结果：**115/115 PASS**（2026-10-23，mneme lib 0.9.3）。此前的 3 条 embedded 去重断言失败根因在上游：`saveWithDedupe` 的候选集是 `store.list({type, limit:100})` 按 importance 排序，某类型高 importance 行超过 100 条后，新写入行进不了候选集 → 同标题再存恒返回 created。bridge 侧已用 `_mergeInto` 做定向补位（embedded 模式生效；remote 模式与 daemon 仍取决于上游修复）。
+复制到临时目录的库副本上（含 -wal/-shm）。最近一次结果：**118/118 PASS**（2026-10-31，mneme lib 0.9.5）。此前 3 条 embedded 去重断言失败根因在上游：`saveWithDedupe` 的候选集是 `store.list({type, limit:100})` 按 importance 排序，某类型高 importance 行超过 100 条后新写入行进不了候选集，同标题再存恒返回 created。上游 0.9.5 起改用 `store.activeByTypeAndTitle` 定向取（[#505](https://github.com/slow-stack/mneme/issues/505)），bridge 侧 v0.6.5 的 `_mergeInto` 定向补位已于本次删除。
 
 设计文档核对项（docs/mneme-bridge-design.md §6）：
 

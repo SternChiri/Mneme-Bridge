@@ -199,7 +199,7 @@ cd Mneme-Bridge
 1. **取上下文**：扩展按你当前输入的话题，向本地桥接请求相关记忆
 2. **拼装**：桥接返回画像与通用偏好（会话首轮）+ 当轮话题相关的记忆
 3. **注入**：隐式模式拼进请求体；可见模式先写进输入框供你过目
-4. **检索质量**：由 mneme 的混合检索提供（建议 mneme ≥ 0.8.14，注入走上游 `GET /context` 管线）；`mneme.contextSource="heuristic"` 的降级拼装路径额外做关键词补路、寒暄跳过与元记忆过滤
+4. **检索质量**：由 mneme 的混合检索提供（建议 mneme ≥ 0.9.5，注入走上游 `GET /context` 管线）；`mneme.contextSource="heuristic"` 的降级拼装路径额外做关键词补路、寒暄跳过与元记忆过滤
 
 ## 🧩 桥接服务的 REST 接口
 
@@ -230,7 +230,7 @@ cd Mneme-Bridge
 | `mneme.mode` | `auto` | auto（启动时探测一次）/ embedded / remote；remote 为 8790 REST（DSH 外部访问或独立 daemon） |
 | `mneme.libPath` / `dataDir` | 空（自动探测） | embedded 模式的记忆库位置 |
 | `mneme.contextExcludeSensitive` | `true` | 注入（/memory/context）是否排除带 sensitivity 标注的记忆——敏感条目不随每轮请求发往网页端 |
-| `mneme.allowedLibRange` | `^0.8.14` | embedded 模式 mneme lib 版本门控；超出区间拒绝启动。空串关闭校验 |
+| `mneme.allowedLibRange` | `^0.9.5` | embedded 模式 mneme lib 版本门控；超出区间拒绝启动。空串关闭校验 |
 | `distill.enabled` | `true` | 关掉即完全停止蒸馏 |
 | `distill.idleMs` | 10 分钟（未写进生成的 config 时按此兜底） | 会话静默多久后触发蒸馏 |
 | `distill.dshCommand` | `dsh` | 蒸馏用的 LLM 命令 |
@@ -487,7 +487,7 @@ Both paths end up in the same buffer queue awaiting DSH headless distillation; t
 1. **Fetch context**: the extension asks the local bridge for relevant memories based on your current input topic
 2. **Assemble**: the bridge returns profile & general preferences (first turn of a session) + memories relevant to the current topic
 3. **Inject**: implicit mode appends into the request body; visible mode writes into the input box for your review
-4. **Retrieval quality**: provided by mneme's hybrid retrieval (mneme ≥ 0.8.14 recommended; injection goes through the upstream `GET /context` pipeline); the `mneme.contextSource="heuristic"` fallback path additionally performs keyword bridging, greeting skip, and meta-memory filtering
+4. **Retrieval quality**: provided by mneme's hybrid retrieval (mneme ≥ 0.9.5 recommended; injection goes through the upstream `GET /context` pipeline); the `mneme.contextSource="heuristic"` fallback path additionally performs keyword bridging, greeting skip, and meta-memory filtering
 
 ## 🧩 Bridge REST API
 
@@ -516,7 +516,7 @@ Both paths end up in the same buffer queue awaiting DSH headless distillation; t
 | `mneme.mode` | `auto` | auto (probed once at startup) / embedded / remote; remote is the 8790 REST API (DSH external access or a standalone daemon) |
 | `mneme.libPath` / `dataDir` | empty (auto-detect) | Memory-store location for embedded mode |
 | `mneme.contextExcludeSensitive` | `true` | Whether injection (/memory/context) excludes memories carrying a sensitivity label — sensitive entries are not sent to the web app with every request |
-| `mneme.allowedLibRange` | `^0.8.14` | Version gate for the mneme lib in embedded mode; startup is refused outside the range. Empty string disables the check |
+| `mneme.allowedLibRange` | `^0.9.5` | Version gate for the mneme lib in embedded mode; startup is refused outside the range. Empty string disables the check |
 | `distill.enabled` | `true` | Turn off to stop distillation entirely |
 | `distill.idleMs` | 10 minutes (fallback when absent from the generated config) | How long a session stays idle before distillation triggers |
 | `distill.dshCommand` | `dsh` | The LLM command used for distillation |

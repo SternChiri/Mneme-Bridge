@@ -123,7 +123,9 @@ export function createRemoteBackend(mnemeCfg) {
     /**
      * 组合上下文 /memory/context：优先走 mneme ≥0.8.14 的 GET /context 端点。
      * 端点路径：GET /context?q&topK&threshold（宿主注入管线全语义——优先级分层 /
-     * pin 前置 / 质量加权 / coding 门控），返回 {profile, rules, items, pinnedCount}。
+     * pin 前置 / 质量加权 / coding 门控），返回 {profile, rules, items, pinnedCount}；
+     * 0.9.5+ 多一个 tier 档位信号（full / degraded / unknown，上游 fail-closed），
+     * bridge 只原样透传、不臆测：老 lib 没有这个键就不加，降级时另打一条 warn 供运维看。
      * bridge 侧职责：sensitivity 过滤 + 元记忆过滤 + 4 字段瘦身 +
      * 兼容形状映射（items 前 pinsLimit 条 → pins，其余 → related；上游已排好序）。
      * 降级路径：上游 404（<0.8.14）/ 网络失败 / 响应形状不对 → 走四路并发拼装
@@ -158,6 +160,9 @@ export function createRemoteBackend(mnemeCfg) {
             }
           });
           if (r.status === 200 && r.json && typeof r.json.profile === "string" && Array.isArray(r.json.items)) {
+            // tier 只在真拿到字符串时透传；上游三值之外的取值也照传不解释（响应读数归调用方）
+            const tier = typeof r.json.tier === "string" ? r.json.tier : null;
+            if (tier === "degraded") log.warn("context-tier-degraded", { tier });
             // 元记忆过滤沿用 embedded 口径：tags 含 meta/self_referential 或版本号形态 title
             const isMeta = (t, tagsField) => {
               let tags = tagsField;
@@ -172,7 +177,8 @@ export function createRemoteBackend(mnemeCfg) {
                 profile: r.json.profile,
                 rules: Array.isArray(r.json.rules) ? r.json.rules.filter((x) => typeof x === "string") : [],
                 pins: all.slice(0, pinsLimit),
-                related: all.slice(pinsLimit)
+                related: all.slice(pinsLimit),
+                ...(tier ? { tier } : {})
               },
               via: "endpoint"
             };

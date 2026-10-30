@@ -55,8 +55,9 @@ function defaults() {
       contextSource: "auto",
       // embedded 模式 mneme lib 版本门控（lib 内部签名无稳定性契约）。
       // 语法 ^MAJOR.MINOR[.PATCH]：major 相同且 (minor, patch) 逐级 ≥ 即放行；
-      // 下界 0.8.14 起（strictScope 越权修复）；空串 = 关闭校验。
-      allowedLibRange: "^0.8.14",
+      // 下界 0.9.5 起（上游 activeByTypeAndTitle 接管同标题去重，bridge 侧补位已撤）；
+      // 空串 = 关闭校验。
+      allowedLibRange: "^0.9.5",
       contextRelatedTopK: 6
     },
     // 对话链路的 bridge 侧去重（任务硬性要求）：sha256(user+\n+assistant) 的 LRU

@@ -215,7 +215,9 @@ function startFakeMneme(port) {
           { id: "ctx-pin2", type: "constraint", title: "endpoint-pin-2", content: "endpoint pin content 2", tags: [], importance: 5, source: "fake", created_at: "2026-03-03T00:00:00Z", updated_at: "2026-03-03T00:00:00Z" }
         ];
         if (q) items.push({ id: "ctx-rel", type: "project", title: "endpoint-rel:" + q, content: "endpoint related hit", tags: [], importance: 4, source: "fake", created_at: "2026-03-01T00:00:00Z", updated_at: "2026-03-01T00:00:00Z" });
-        return reply(200, { profile: "fake-user-profile: 偏好中文回复，注重新鲜度", rules: ["fake-rule-1: 回答要短", "fake-rule-2: 引用给出处"], items, pinnedCount: 2 });
+        // tier 桩：0.9.5 起第五键；q=smoke-tier-degraded 时模拟规则档（嵌入降级）
+        const tier = q === "smoke-tier-degraded" ? "degraded" : "full";
+        return reply(200, { profile: "fake-user-profile: 偏好中文回复，注重新鲜度", rules: ["fake-rule-1: 回答要短", "fake-rule-2: 引用给出处"], items, pinnedCount: 2, tier });
       }
       return reply(404, { error: "not-found" });
     });
@@ -507,6 +509,9 @@ async function main() {
     check("context endpoint 未打 /search", fake.state.searches.length === 0 || fake.state.searches.every((s) => !String(s.q).includes("smoke-endpoint")), JSON.stringify(fake.state.searches));
     // 候选数与 embedded 同口径：topK + pinsLimit 一次给足（少传 remote 会最多少 pinsLimit 条 related）
     check("context endpoint topK=pinsLimit+topK（4+5=9）", fake.state.contextCalls.length === 1 && fake.state.contextCalls[0].topK === 9, JSON.stringify(fake.state.contextCalls));
+    check("context endpoint tier 原样透传（0.9.5+ 第五键）", rE.json?.tier === "full", JSON.stringify(rE.json?.tier));
+    const rDeg = await http("GET", A.base + "/memory/context?q=smoke-tier-degraded&topK=4", { token: tA });
+    check("context tier=degraded 仍返回 200 且条目照给（不拦注入）", rDeg.status === 200 && rDeg.json?.tier === "degraded" && Array.isArray(rDeg.json?.pins) && rDeg.json.pins.length === 3, rDeg.status + " " + JSON.stringify(rDeg.json?.tier) + " pins=" + rDeg.json?.pins?.length);
     fake.state.contextEndpoint = false;   // 关回，保下方降级路径断言语境
   }
 
@@ -524,6 +529,7 @@ async function main() {
       const before = fake.state.searches.length;
       const r2 = await http("GET", A.base + "/memory/context", { token: tA });
       check("context q 空 → 200 且 related=[]", r2.status === 200 && Array.isArray(r2.json?.related) && r2.json.related.length === 0, r2.status + " " + r2.text.slice(0, 160));
+      check("降级拼装路径不带 tier（老 lib 无此键时不臆测）", r2.json?.tier === undefined, JSON.stringify(r2.json?.tier));
       check("context q 空 → 不打上游 /search", fake.state.searches.length === before, "searches=" + fake.state.searches.length);
       // 鉴权：context 同样要 token
       const r3 = await http("GET", A.base + "/memory/context?q=x");

@@ -134,12 +134,17 @@ export function createDistiller(opts) {
     // 空数组 = 模型显式无内容（ok:true）；非空数组若全部无效则按失败处理，
     // 否则无效输出会静默消费窗口（原料被标 distilled 而产物为零）。
     // arrLen/invalid 是审计观测数据（对齐上游 audit.metadata 的 parsed 口径）。
+    // sampleTypes：模型实际写出的分类词原样带出（去重、最多 6 个）。
+    // 上游 #502 的教训——被枚举滤空的窗口里，模型往往自造了分类（如「环境/版本」），
+    // 只报 invalid 计数看不出它到底造了什么，诊断就只剩猜。
+    const sampleTypes = [...new Set(arr.map((i) => i && i.type).filter((t) => typeof t === "string"))].slice(0, 6);
     return {
       ok: salvaged ? entries.length > 0 : (arr.length === 0 || entries.length > 0),
       entries,
       salvaged,
       arrLen: arr.length,
-      invalid: arr.length - entries.length
+      invalid: arr.length - entries.length,
+      sampleTypes
     };
   }
 
@@ -257,8 +262,9 @@ export function createDistiller(opts) {
         "请从中提炼【跨会话】的持久原子记忆：反复出现的偏好、延续的项目脉络、重要决定。",
         "单会话内部细节一律丢弃——摘要卡是提纯后的原料，不要还原成会话记录。",
         "原子记忆原则：每条只装一个独立事实，短小、自带完整上下文；宁可拆成多条也绝不合并丢细节。",
+        "立场纪律：只记事实、偏好、决策与约束，不记对用户本人性格、能力、情绪、品行的评价；卡片里助手的结论属推断，除非用户明确采纳否则不记成事实。",
         "只输出 JSON 数组，每项形如 {\"type\":\"preference|project|decision|history\",\"title\":\"简短标题\",\"content\":\"保留原始细节的一句话\",\"importance\":1-5}。",
-        "无跨会话共性就输出 []；不要杜撰。不要输出任何其他文字。",
+        "无跨会话共性就输出 []；不要杜撰。只能取上面枚举里的值，不要自造分类；每项只输出上面列出的键，不要附加 id、source 等额外字段。不要输出任何其他文字。",
         "",
         "摘要卡：",
         transcript
@@ -271,12 +277,17 @@ export function createDistiller(opts) {
       // ── 上游 mneme PROMPTS.codingSummary.zh（逐字）──
       "你是记忆库提炼助手。根据下面的会话内容（含用户输入、助手回答、工具调用与结果），提炼值得跨会话记住的原子记忆。",
       "原子记忆原则：每条记忆只装一个独立事实/偏好/决策，短小、自带完整上下文（把数字、报错信息、命令、路径、结论等原始细节保留在 content 里，不要抽象概括）；宁可拆成多条也绝不合并丢细节。信息量一般提 2-4 条，信息密集的对话可提 4-8 条。",
+      "立场纪律（与上条原则冲突时以本条为准）：",
+      "- 只记事实、偏好、决策与约束。偏好是用户对某件事的立场，照常记录；但不要记录对用户本人性格、能力、情绪、品行的评价，无论褒贬（「用户很聪明」「用户今天很沮丧」都不进记忆库）。",
+      "- 转录里「用户：」「助手：」可信度不同：用户说的话是用户陈述；助手与子会话的结论、评价是推断，不是事实。除非用户明确采纳，否则不要把助手的结论或评价写成记忆；确需保留时，content 里要写明这是推断。工具输出、报错、命令结果直接给出的技术结论不受此限，照常记录。",
+      "- 用户陈述与助手推断冲突时，事实归属以用户陈述为准（不要把助手推断记成事实）；但 content 里要把两种说法如实并存，不要写成谁对谁错、也不要替用户裁决。",
+      "- importance 只看这条事实对后续工作的影响面。用户表达满意、赞许或情绪，都不是提高 importance 的理由。",
       "只输出 JSON 数组，每项形如 {\"type\":\"preference|project|decision|history|rejected_solution|pitfall|constraint\",\"title\":\"简短标题\",\"content\":\"保留原始细节的一句话\",\"importance\":1-5}。",
       "若对话涉及编码/调试，可额外提取编码类记忆：",
       "- rejected_solution：被否决/废弃的实现方案（content 含方案简述 + 被否决原因 + 最终采用方案）",
       "- pitfall：调试踩坑记录（content 含现象/报错 + 根因 + 解决/规避方法）",
       "- constraint：项目工程约束（content 含约束描述 + 来源）",
-      "普通闲聊、临时无关对话一律不提取编码类记忆。不要输出任何其他文字。",
+      "普通闲聊、临时无关对话一律不提取编码类记忆。只能取上面枚举里的值，不要自造分类；每项只输出上面列出的键，不要附加 id、source 等额外字段。不要输出任何其他文字。",
       // ── bridge 侧补充（上游无此输入形态；不并入上游口径文本）──
       "[bridge 输入形态说明] 下面是网页对话的编号转录，每条含时间戳与用户/助手发言，没有真实的工具调用事件——按普通会话内容蒸馏即可。",
       "[bridge 反复述防御] 对话开头若出现 [记忆参考 | ...] 注入块（来自本机记忆库的历史记忆）或助手在寒暄中复述既有记忆（如『我记得你之前…』），这些内容是已入库记忆的重提，一律不得再次提炼入库；只提炼本对话中新产生的事实、决定与偏好。纯寒暄且无新信息的会话输出 []。",
@@ -370,7 +381,7 @@ export function createDistiller(opts) {
           //   ok:true（含显式空数组与 salvage 救回条数>0）→ 正常落库 + 标记。
           const parsed = parseSummaryJsonResult(out);
           if (!parsed.ok) {
-            log.warn("distill-parse-fail", { sid: sid.slice(0, 8), salvaged: parsed.salvaged, head: out.slice(0, 160) });
+            log.warn("distill-parse-fail", { sid: sid.slice(0, 8), salvaged: parsed.salvaged, arr: parsed.arrLen, invalid: parsed.invalid, types: parsed.sampleTypes, head: out.slice(0, 160) });
             failedGroups++;
             continue;
           }

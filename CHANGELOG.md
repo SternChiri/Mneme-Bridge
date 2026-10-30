@@ -4,12 +4,25 @@
 
 | 组件 | 形态 | 版本 |
 |---|---|---|
-| **mneme-bridge** | 本地 Node 服务（托盘常驻） | 0.6.4 |
+| **mneme-bridge** | 本地 Node 服务（托盘常驻） | 0.6.5 |
 | **mneme-bridge-ext** | Edge / Chrome 扩展（MV3） | 0.6.2 |
 
 版本号规则：小修 → `0.6.x`；新功能 → `0.7.0`；破坏性变更 → `1.0.0`（留给三端全通之日）。
 
 ---
+
+## v0.6.6 — 对齐 mneme 0.9.5
+
+### 🛠 桥接
+
+- **同标题合并补位下线**：上游 0.9.5 起 `saveWithDedupe` 改用 `store.activeByTypeAndTitle(type, title)` 定向取候选（[#505](https://github.com/slow-stack/mneme/issues/505) / [PR #506](https://github.com/slow-stack/mneme/pull/506)），v0.6.5 在 `lib/embedded.js` 里按 `(type, title)` + scope 键预查、塞 `_mergeInto` 的补位整块删除；`summary` 绕过逻辑随之失效（上游本就按 source 身份去重）
+- **lib 版本门控下界抬到 0.9.5**：`mneme.allowedLibRange` 默认 `^0.8.14` → `^0.9.5`。补位删掉后老 lib 会退回静默新建行，下界必须跟着抬
+- **`/context` 透传 `tier`**：0.9.5 的第五键（`full` / `degraded` / `unknown`；无 embedder 时上游 fail-closed 给 `degraded`）。bridge 只原样透传不臆测，`degraded` 时打 `context-tier-degraded` warn，降级拼装路径不带该键
+- **蒸馏提示词补「立场纪律」**：`lib/distiller.js` 两条提示词与上游 `PROMPTS.codingSummary` / `summary`（[#531](https://github.com/slow-stack/mneme/pull/531)）对齐——只记事实、偏好、决策与约束；不记对用户本人性格、能力、情绪的褒贬评价；转录里助手的结论属推断
+
+### 🧪 测试
+
+- 冒烟 118/118（mneme lib 0.9.5）：新增 `tier` 透传三例（原样透传 / `degraded` 不拦注入 / 老 lib 不臆测该键）
 
 ## v0.6.5 — 仓库通用化与同标题合并补位
 
