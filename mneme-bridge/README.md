@@ -169,7 +169,7 @@ node scripts/smoke.mjs
 覆盖：假 mneme 打桩下的 remote 四链路（save/search/recent/conversation+去重）、
 副本库下的 embedded 同四链路、401/502/超时分支、OPTIONS 预检、
 生产库零接触校验（前后 stat 对比）。**smoke 不写生产库**——embedded 链路跑在
-复制到临时目录的库副本上（含 -wal/-shm）。最近一次结果：**118/118 PASS**（2026-10-31，mneme lib 0.9.5）。此前 3 条 embedded 去重断言失败根因在上游：`saveWithDedupe` 的候选集是 `store.list({type, limit:100})` 按 importance 排序，某类型高 importance 行超过 100 条后新写入行进不了候选集，同标题再存恒返回 created。上游 0.9.5 起改用 `store.activeByTypeAndTitle` 定向取（[#505](https://github.com/slow-stack/mneme/issues/505)），bridge 侧 v0.6.5 的 `_mergeInto` 定向补位已于本次删除。
+复制到临时目录的库副本上（含 -wal/-shm）。最近一次结果：**119/119 PASS**（2026-11-14，mneme lib 0.15.1）。此前 3 条 embedded 去重断言失败根因在上游：`saveWithDedupe` 的候选集是 `store.list({type, limit:100})` 按 importance 排序，某类型高 importance 行超过 100 条后新写入行进不了候选集，同标题再存恒返回 created。上游 0.9.5 起改用 `store.activeByTypeAndTitle` 定向取（[#505](https://github.com/slow-stack/mneme/issues/505)），bridge 侧 v0.6.5 的 `_mergeInto` 定向补位已于本次删除。
 
 设计文档核对项（docs/mneme-bridge-design.md §6）：
 

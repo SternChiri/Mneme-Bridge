@@ -632,7 +632,7 @@ async function main() {
       // 另存一条 5 的专门命中 pins 过滤）
       await http("POST", C.base + "/memory/save", {
         token: tC,
-        body: { type: "project", title: "smoke-pin-high-" + TAG, content: "高价值项目记忆用于 pins 过滤断言", importance: 5 }
+        body: { type: "project", title: "smoke-pin-high-" + TAG, content: "缓存目录移出仓库，构建产物改写到 F 盘临时目录，版本控制状态刷新从 12 秒降到 0.4 秒", importance: 5 }
       });
 
       // 带 q：聚合四字段
@@ -643,6 +643,15 @@ async function main() {
       check("embedded context.pins 全部为身份记忆（preference/constraint）", Array.isArray(r.json?.pins) && r.json.pins.length > 0 && r.json.pins.every(p => p.type === "preference" || p.type === "constraint"), JSON.stringify(r.json?.pins?.map(p => p.type)));
       check("embedded context.related 含刚写的高价值记忆（q 检索路径）", Array.isArray(r.json?.related) && r.json.related.some(p => p.title === "smoke-pin-high-" + TAG), JSON.stringify(r.json?.related?.map(p => p.title)?.slice(0, 3)));
       check("embedded context.related 命中搜索", Array.isArray(r.json?.related) && r.json.related.some((m) => m.title === "smoke-pin-high-" + TAG), JSON.stringify(r.json?.related)?.slice(0, 220));
+      // 质量闸：0.15.x 默认开时，trim 后不足 10 字且 importance<4 的正文会被归档，
+      // 接口照回 201 而注入面看不到。bridge 显式关掉该闸，这条短记忆必须照旧出现。
+      await http("POST", C.base + "/memory/save", {
+        token: tC,
+        body: { type: "project", title: "smoke-short-" + TAG, content: "用 F 盘", importance: 3 }
+      });
+      const rS = await http("GET", C.base + "/memory/context?q=smoke-short-" + TAG + "&topK=4", { token: tC });
+      const sItems = [...(rS.json?.pins ?? []), ...(rS.json?.related ?? [])];
+      check("embedded 短正文仍进注入面（memoryQualityFilter 已关）", sItems.some((m) => m.title === "smoke-short-" + TAG), JSON.stringify(sItems.map((m) => m.title)));
       check("embedded context 每条只留 4 字段且截 160", [...r.json.pins, ...r.json.related].every((m) =>
         Object.keys(m).sort().join(",") === "content,importance,title,type" && m.content.length <= 160
       ), JSON.stringify(r.json?.pins?.[0] ?? {}));

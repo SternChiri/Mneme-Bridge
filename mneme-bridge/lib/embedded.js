@@ -125,13 +125,21 @@ export async function createEmbeddedBackend(mnemeCfg) {
   // 人可读镜像直接落在数据目录里（与 DSH 内运行时同布局），language 固定 zh。
   const mirror = mod.mirror.createMirror(dataDir, "zh");
 
-  // config 传最小集：language 参与镜像渲染与去重标题；显式关掉 document 子系统
-  // 与质量过滤这两个「bridge 场景不需要」的重功能（都受 config 门控，关 = 走默认
-  // 轻路径）。不传 documentIndex/writeAdmission：service 内部 if-guard 安全。
+  // config 传最小集：language 参与镜像渲染与去重标题；显式关掉 document 子系统，
+  // 以及 0.15.x 起默认打开的质量闸（memoryQualityFilter）。后者读法在 0.15 变成
+  // `!== false`，默认就开：trim 后不足 10 字的正文写入即打 short_content/low_quality
+  // 并归档，接口仍回 201，注入面却永远看不到——bridge 的写入方是扩展手动保存与
+  // 蒸馏产物，都属于用户明确要留的内容，被这层闸静默吞掉不合理，故显式关闭。
+  // 老 lib 不认这个键，多传无害。不传 documentIndex/writeAdmission：service 内部
+  // if-guard 安全。
   const service = mod.service.createService({
     store,
     mirror,
-    config: { language: "zh", documentMemoryEnabled: false },
+    config: {
+      language: "zh",
+      documentMemoryEnabled: false,
+      memoryQualityFilter: { enabled: false }
+    },
     logger: {
       // mneme 期待 console 风格 logger（info/warn/error）；转成单行 JSON 混流
       info: (...a) => log("info", "mneme", { msg: a.map(String).join(" ") }),

@@ -15,3 +15,7 @@ docs/upstream-watch/
 
 # 本机工作稿与过程记录（不上传仓库）
 docs/upstream-*.md
+
+# mneme 地志（插件在 cwd 生成的产物，只有 plan.yaml 值得跟踪）
+.chorography/*
+!.chorography/plan.yaml

@@ -4,12 +4,24 @@
 
 | 组件 | 形态 | 版本 |
 |---|---|---|
-| **mneme-bridge** | 本地 Node 服务（托盘常驻） | 0.6.5 |
+| **mneme-bridge** | 本地 Node 服务（托盘常驻） | 0.6.6 |
 | **mneme-bridge-ext** | Edge / Chrome 扩展（MV3） | 0.6.2 |
 
 版本号规则：小修 → `0.6.x`；新功能 → `0.7.0`；破坏性变更 → `1.0.0`（留给三端全通之日）。
 
 ---
+
+## v0.6.7 — 跟随 mneme 0.15.1
+
+### 🛠 桥接
+
+- **关掉上游默认打开的写入质量闸**：mneme 0.15 起 `memoryQualityFilter` 的判据由 `=== true` 改成 `!== false`，默认就是开的。trim 后不足 10 字的正文写入即归档、打 `short_content` / `low_quality`，接口照回 201，注入面却永远看不到（importance ≥ 4 豁免）。bridge 的写入方是扩展的手动保存与蒸馏产物，都是用户明确要留的内容，不该被这层闸静默吞掉，故装配 service 时显式传 `memoryQualityFilter: { enabled: false }`。面板与 agent 那条路的默认值不变；老 lib 不认该键，多传无影响。
+- **冒烟夹具改成普通陈述句**：0.15 起写入即打标签，讲记忆系统自身的正文会被标成 `meta` / `self_referential`，bridge 拼 context 时的 `isMeta` 过滤会整条剔除，原夹具因此恒失败。
+
+### 🧪 测试
+
+- 冒烟 119/119（mneme lib 0.15.1）：新增「短正文仍进注入面」断言——存一条 importance 3、正文 4 字的记忆要求它出现在 pins/related 里；反向把闸改回开，该断言失败（118/119），确认测的是闸口本身。
+- `.chorography/*` 进 ignore（插件在当前目录生成的扫描产物，只保留 `plan.yaml`）。
 
 ## v0.6.6 — 对齐 mneme 0.9.5
 
